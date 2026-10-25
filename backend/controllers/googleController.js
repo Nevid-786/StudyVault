@@ -79,13 +79,13 @@ export const getGoogleAccessToken = async (req, res) => {
 		res.cookie(AUTH_COOKIE_NAME, token, {
 			httpOnly: true,
 			secure: process.env.NODE_ENV === "production",
-			sameSite: "lax",
+			sameSite: "none",
 			maxAge: JWT_MAX_AGE_MS,
 			path: "/",
 		}).cookie("google_access_token",  googleTokens.access_token, {
 			httpOnly: true,
 			secure: process.env.NODE_ENV === "production",
-			sameSite: "lax",
+			sameSite: "none",
 			maxAge: JWT_MAX_AGE_MS,
 			path: "/",
 		});
