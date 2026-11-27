@@ -3,6 +3,7 @@ import express from "express";
 import cors from "cors";
 import cookieParser from "cookie-parser";
 import googleRouter from "./routes/googleRoute.js";
+import aiRouter from "./routes/aiRoute.js";
 
 const app = express();
 app.use(cors({
@@ -12,6 +13,7 @@ app.use(cors({
 app.use(express.json());
 app.use(cookieParser());
 app.use("/api/google", googleRouter);
+app.use("/api/ai", aiRouter);
 
 const port = process.env.PORT || 3000;
 app.listen(port, () => {

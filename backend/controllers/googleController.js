@@ -5,10 +5,17 @@ const GOOGLE_USER_INFO_URL = "https://www.googleapis.com/oauth2/v2/userinfo";
 const JWT_ISSUER = "minor-project-api";
 const AUTH_COOKIE_NAME = "authToken";
 const JWT_MAX_AGE_MS = 60 * 60 * 1000;
+const isProduction = process.env.NODE_ENV === "production";
+const authCookieOptions = {
+	httpOnly: true,
+	secure: isProduction,
+	sameSite: isProduction ? "none" : "lax",
+	maxAge: JWT_MAX_AGE_MS,
+	path: "/",
+};
 
 export const getGoogleAccessToken = async (req, res) => {
 	const { code } = req.body;
-    console.log("Received authorization code:", code);
 
 	if (typeof code !== "string" || !code.trim()) {
 		return res.status(400).json({ message: "Authorization code is required" });
@@ -39,7 +46,6 @@ export const getGoogleAccessToken = async (req, res) => {
 			}),
 		});
 		const googleTokens = await tokenResponse.json();
-        console.log("Received Google tokens:", googleTokens);
 
 		if (!tokenResponse.ok || !googleTokens.access_token) {
 			return res.status(400).json({ message: "Google token exchange failed" });
@@ -76,19 +82,8 @@ export const getGoogleAccessToken = async (req, res) => {
 			{ algorithm: "HS256", expiresIn: "1h", issuer: JWT_ISSUER }
 		);
 
-		res.cookie(AUTH_COOKIE_NAME, token, {
-			httpOnly: true,
-			secure: process.env.NODE_ENV === "production",
-			sameSite: "none",
-			maxAge: JWT_MAX_AGE_MS,
-			path: "/",
-		}).cookie("google_access_token",  googleTokens.access_token, {
-			httpOnly: true,
-			secure: process.env.NODE_ENV === "production",
-			sameSite: "none",
-			maxAge: JWT_MAX_AGE_MS,
-			path: "/",
-		});
+		res.cookie(AUTH_COOKIE_NAME, token, authCookieOptions)
+			.cookie("google_access_token", googleTokens.access_token, authCookieOptions);
 
 		return res.json({user:{sub: user.id,
 				email: user.email,

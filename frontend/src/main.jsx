@@ -11,6 +11,7 @@ import SingleSubject from './pages/singleSubject.jsx'
 import AddNotes from './pages/AddNotes.jsx'
 import Unitpage from './pages/UnitPage.jsx'
 import StorageSync from './pages/StorageSync.jsx'
+import Revision from './pages/Revision.jsx'
 
 const router = createBrowserRouter([
   {
@@ -21,6 +22,7 @@ const router = createBrowserRouter([
       { path: 'add',       element: <AddNotes /> },
       { path: 'subjects',  element: <Subjects /> },
       { path: 'storage',   element: <StorageSync /> },
+      { path: 'revision',  element: <Revision /> },
       {path:"subjects/:name" ,element:<SingleSubject/>},
       {path:"unit" ,element:<Unitpage/>},
       { path: 'login',     element: <div /> },

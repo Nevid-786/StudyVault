@@ -3,6 +3,7 @@ import { useDispatch, useSelector } from 'react-redux'
 import { useGoogleLogin, GoogleOAuthProvider } from '@react-oauth/google'
 import { signInSucceeded } from '../stores/authSlice.js'
 import { useEffect } from 'react'
+import AuthService from '../services/authService.js'
 
 const GoogleLogin = () => {
   const dispatch = useDispatch()
@@ -28,23 +29,8 @@ const GoogleLogin = () => {
       setError('')
 
       try {
-        const apiUrl = import.meta.env.VITE_API_URL || 'http://localhost:3000'
-        const response = await fetch(`${apiUrl}/google/code`, {
-          method: 'POST',
-          credentials: 'include',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ code }),
-        })
-        const result = await response.json()
-        console.log("user login:", result);
-
-        if (!response.ok) {
-          throw new Error(result.message || 'Google sign-in failed')
-        }
-
-        dispatch(
-          signInSucceeded(result),
-        )
+        const result = await AuthService.login(code)
+        dispatch(signInSucceeded(result))
       } catch (signInError) {
         setError(signInError instanceof Error ? signInError.message : 'Google sign-in failed')
       }
@@ -62,10 +48,18 @@ const GoogleLogin = () => {
   )
 }
 
-const GoogleLoginPage = () => (
-  <GoogleOAuthProvider clientId={import.meta.env.VITE_CLIENT_ID}>
-    <GoogleLogin />
-  </GoogleOAuthProvider>
-)
+const GoogleLoginPage = () => {
+  const clientId = import.meta.env.VITE_CLIENT_ID
+
+  if (!clientId) {
+    return <p role="alert">Google sign-in is not configured. Set VITE_CLIENT_ID in the frontend deployment environment and redeploy.</p>
+  }
+
+  return (
+    <GoogleOAuthProvider clientId={clientId}>
+      <GoogleLogin />
+    </GoogleOAuthProvider>
+  )
+}
 
 export default GoogleLoginPage

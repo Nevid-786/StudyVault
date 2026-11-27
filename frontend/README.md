@@ -1,16 +1,35 @@
-# React + Vite
+# StudyVault
 
-This template provides a minimal setup to get React working in Vite with HMR and some Oxlint rules.
+## Run locally
 
-Currently, two official plugins are available:
+Use a recent Node.js LTS release. Configure Google OAuth before signing in:
 
-- [@vitejs/plugin-react](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react) uses [Oxc](https://oxc.rs)
-- [@vitejs/plugin-react-swc](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react-swc) uses [SWC](https://swc.rs/)
+1. In Google Cloud Console, enable the Google Drive API, create an OAuth 2.0 **Web application** client, and add `http://localhost:5173` as both an authorized JavaScript origin and an authorized redirect URI.
+2. Copy `backend/.env.example` to `backend/.env` and set `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`, and a long random `JWT_SECRET`. Keep `GOOGLE_REDIRECT_URI=http://localhost:5173` for the local frontend.
+3. Copy `frontend/.env.example` to `frontend/.env` and set `VITE_CLIENT_ID` to the same client ID. Keep `VITE_API_URL=http://localhost:3000/api`.
+4. Create a Gemini API key in [Google AI Studio](https://aistudio.google.com/apikey) and add `GEMINI_API_KEY=<your-key>` to `backend/.env`. This is separate from the Google OAuth client secret.
+5. In a terminal, start the backend:
 
-## React Compiler
+   ```powershell
+   cd backend
+   npm install
+   npm run dev
+   ```
 
-The React Compiler is not enabled on this template because of its impact on dev & build performances. To add it, see [this documentation](https://react.dev/learn/react-compiler/installation).
+6. In a second terminal, start the frontend:
 
-## Expanding the Oxlint configuration
+   ```powershell
+   cd frontend
+   npm install
+   npm run dev
+   ```
 
-If you are developing a production application, we recommend using TypeScript with type-aware lint rules enabled. Check out the [TS template](https://github.com/vitejs/vite/tree/main/packages/create-vite/template-react-ts) for information on how to integrate TypeScript and Oxlint's TypeScript related rules in your project.
+Open the URL Vite prints, usually `http://localhost:5173`.
+
+The backend listens on port `3000`. If you change either port, update the frontend API URL and backend `FRONTEND_URL` to match.
+
+## Revision / Exam Mode
+
+Open **Revision / Exam Mode** and select **Build / refresh index** after saving materials. The app reads files stored in this browser and the signed-in user's `Study_Vault` Google Drive folder. Text extraction happens in the browser; text is sent to Gemini to create embeddings and the local vector index stays in this browser, separated by Google account. Study questions send relevant excerpts to Gemini for grounded answers and citations. General chat sends the conversation to Gemini without retrieving study files.
+
+Indexing supports PDF, DOCX, PPTX, TXT, Markdown, CSV, and images via OCR. Legacy DOC/PPT files need conversion. Rebuild the index after changing study materials.

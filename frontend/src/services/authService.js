@@ -6,11 +6,7 @@ class AuthService {
 			code
 		});
 
-		const data = await response.json();
-		if (!response.ok) {
-			throw new Error(data.message || 'Login failed');
-        }
-		return data;
+		return response.data;
 	}
     static async currentUser(){
         const res= await api.get("/google/me");

@@ -9,11 +9,9 @@ const authSlice = createSlice({
   },
   reducers: {
     signInSucceeded: (state, action) => {
-      console.log("payload",action.payload)
       state.googleAccessToken = action.payload.googleAccessToken;
       state.user = action.payload.user;
 
-      console.log("folderId", action.payload.folderId);
       state.folderId = action.payload.folderId;
     },
     signedOut: (state) => {

@@ -16,13 +16,15 @@ export default class GoogleDriveService {
     });
     return response.json();
   }
-  static async getAllDriveItems(accessToken) {
+  static async getAllDriveItems(accessToken, folderId = null) {
   const items = [];
   let pageToken;
 
   do {
     const params = new URLSearchParams({
-      q: "trashed = false",
+      q: folderId
+        ? `'${folderId.replace(/\\/g, "\\\\").replace(/'/g, "\\'")}' in parents and trashed = false`
+        : "trashed = false",
       pageSize: "1000",
       fields:
        "nextPageToken,files(id,name,mimeType,parents,modifiedTime,size,md5Checksum,webViewLink,appProperties)",
@@ -119,8 +121,17 @@ static uploadFile = async (
     throw new Error("No file ID received");
   }
 
+  const exportTypes = {
+    "application/vnd.google-apps.document": "text/plain",
+    "application/vnd.google-apps.presentation": "application/pdf",
+    "application/vnd.google-apps.spreadsheet": "text/csv",
+  };
+  const exportType = exportTypes[mimeType];
+  const downloadUrl = exportType
+    ? `https://www.googleapis.com/drive/v3/files/${fileId}/export?mimeType=${encodeURIComponent(exportType)}`
+    : `https://www.googleapis.com/drive/v3/files/${fileId}?alt=media`;
   const response = await fetch(
-    `https://www.googleapis.com/drive/v3/files/${fileId}?alt=media`,
+    downloadUrl,
     {
       headers: {
         Authorization: `Bearer ${accessToken}`,
@@ -160,7 +171,7 @@ static uploadFile = async (
     });
   }
 
-  return new Blob(chunks, { type: mimeType });
+  return new Blob(chunks, { type: exportType || mimeType });
 }
 
 }
