@@ -4,6 +4,12 @@ import GoogleDriveService from '../../services/googleDrive.js'
 import { extractMaterialText } from './documentExtraction.js'
 import { chunkText } from './ragUtils.js'
 import { findRelevantChunks, getIndexChunks, replaceIndexChunks } from './ragIndex.js'
+import {
+  getRagProvider,
+  getUserGeminiApiKey,
+  RAG_PROVIDERS,
+} from './aiProvider.js'
+import { createBrowserGeminiClient } from './geminiApiClient.js'
 
 const EMBEDDING_BATCH_SIZE = 24
 const MAX_DOCUMENTS = 200
@@ -64,15 +70,34 @@ const getStudyDocuments = async ({ accessToken, folderId }) => {
   return documents
 }
 
-const getEmbeddingBatch = async (texts, taskType) => {
-  const response = await api.post('/ai/embeddings', { texts, taskType })
-  if (!Array.isArray(response.data.embeddings) || response.data.embeddings.length !== texts.length) {
-    throw new Error('The embedding service returned an invalid response.')
+const createStudyAiClient = () => {
+  const provider = getRagProvider()
+  if (provider === RAG_PROVIDERS.user) {
+    const apiKey = getUserGeminiApiKey()
+    if (!apiKey) {
+      throw new Error('Your Gemini API key is selected but not saved in this tab. Add it in Storage & Sync settings.')
+    }
+    return createBrowserGeminiClient(apiKey)
   }
-  return response.data.embeddings
+
+  return {
+    async createEmbeddings(texts, taskType) {
+      const response = await api.post('/ai/embeddings', { texts, taskType })
+      if (!Array.isArray(response.data.embeddings) || response.data.embeddings.length !== texts.length) {
+        throw new Error('The embedding service returned an invalid response.')
+      }
+      return response.data.embeddings
+    },
+    async createReply(request) {
+      const { data } = await api.post('/ai/chat', request)
+      return data.answer
+    },
+  }
 }
 
 export const indexStudyMaterials = async ({ userId, accessToken, folderId, onProgress }) => {
+  // Capture the selected provider once so all batches in an index use the same Gemini account.
+  const aiClient = createStudyAiClient()
   const documents = await getStudyDocuments({ accessToken, folderId })
   if (documents.length === 0) {
     throw new Error('No saved materials were found. Add files to a subject or unit first.')
@@ -102,7 +127,7 @@ export const indexStudyMaterials = async ({ userId, accessToken, folderId, onPro
       const batch = textChunks.slice(offset, offset + EMBEDDING_BATCH_SIZE)
       const embeddingTexts = batch.map((chunk) =>
         `title: ${document.name} | ${document.location || 'Study material'}\ntext: ${chunk}`)
-      const embeddings = await getEmbeddingBatch(embeddingTexts, 'RETRIEVAL_DOCUMENT')
+      const embeddings = await aiClient.createEmbeddings(embeddingTexts, 'RETRIEVAL_DOCUMENT')
 
       batch.forEach((chunk, index) => {
         chunksToSave.push({
@@ -138,16 +163,14 @@ export const indexStudyMaterials = async ({ userId, accessToken, folderId, onPro
 export const getStudyIndex = (userId) => getIndexChunks(userId)
 
 export const retrieveStudyContext = async (userId, question) => {
+  const aiClient = createStudyAiClient()
   const chunks = await getIndexChunks(userId)
   if (chunks.length === 0) {
     throw new Error('Index study materials before asking a study question.')
   }
 
-  const { data } = await api.post('/ai/embeddings', {
-    texts: [question],
-    taskType: 'QUESTION_ANSWERING',
-  })
-  const embedding = data.embeddings?.[0]
+  const embeddings = await aiClient.createEmbeddings([question], 'QUESTION_ANSWERING')
+  const embedding = embeddings[0]
   if (!Array.isArray(embedding)) {
     throw new Error('The query embedding response was invalid.')
   }
@@ -156,6 +179,6 @@ export const retrieveStudyContext = async (userId, question) => {
 }
 
 export const createAiReply = async ({ mode, question, history, context }) => {
-  const { data } = await api.post('/ai/chat', { mode, question, history, context })
-  return data.answer
+  const aiClient = createStudyAiClient()
+  return aiClient.createReply({ mode, question, history, context })
 }

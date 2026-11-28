@@ -9,7 +9,18 @@ const MAX_HISTORY_MESSAGES = 12;
 const MAX_TRANSIENT_RETRIES = 2;
 const RETRYABLE_STATUSES = new Set([429, 500, 502, 503, 504]);
 
+const isUserKeyOnlyMode = () => (
+	process.env.RAG_PROVIDER_MODE?.trim().toLowerCase() === "user"
+);
+
 const getApiKey = (res) => {
+	if (isUserKeyOnlyMode()) {
+		res.status(403).json({
+			message: "This deployment requires users to provide their own Gemini API key.",
+		});
+		return null;
+	}
+
 	const apiKey = process.env.GEMINI_API_KEY;
 	if (!apiKey) {
 		res.status(503).json({

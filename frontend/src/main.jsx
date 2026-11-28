@@ -16,8 +16,11 @@ import PDFPage from './pages/PDFPage.jsx'
 import DOCXPage from './pages/DOCXPage.jsx'
 import PPTXPage from './pages/PPTXPage.jsx'
 import ImagePage from './pages/ImagePage.jsx'
+import { PrivacyPolicy, TermsOfService } from './pages/LegalPages.jsx'
 
 const router = createBrowserRouter([
+   { path: '/privacy', element: <PrivacyPolicy /> },
+    { path: '/terms', element: <TermsOfService /> },
   {
     path: '/',
     element: <AuthenticateLayout />,

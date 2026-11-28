@@ -47,6 +47,43 @@ test("AI endpoints report missing Gemini configuration without calling the provi
 	}
 });
 
+test("user-key-only mode blocks all server-backed Gemini requests", async () => {
+	const previousMode = process.env.RAG_PROVIDER_MODE;
+	const previousKey = process.env.GEMINI_API_KEY;
+	const previousFetch = globalThis.fetch;
+	let requests = 0;
+	process.env.RAG_PROVIDER_MODE = "user";
+	process.env.GEMINI_API_KEY = "server-key-must-not-be-used";
+	globalThis.fetch = async () => {
+		requests += 1;
+		throw new Error("Gemini must not be called in user-key-only mode.");
+	};
+
+	try {
+		const chatResponse = createResponse();
+		await createChatResponse(
+			{ body: { question: "Explain entropy", mode: "general" } },
+			chatResponse,
+		);
+		assert.equal(chatResponse.statusCode, 403);
+		assert.match(chatResponse.body.message, /requires users to provide their own Gemini API key/);
+
+		const embeddingsResponse = createResponse();
+		await createEmbeddings(
+			{ body: { texts: ["study notes"], taskType: "RETRIEVAL_DOCUMENT" } },
+			embeddingsResponse,
+		);
+		assert.equal(embeddingsResponse.statusCode, 403);
+		assert.equal(requests, 0);
+	} finally {
+		globalThis.fetch = previousFetch;
+		if (previousMode === undefined) delete process.env.RAG_PROVIDER_MODE;
+		else process.env.RAG_PROVIDER_MODE = previousMode;
+		if (previousKey === undefined) delete process.env.GEMINI_API_KEY;
+		else process.env.GEMINI_API_KEY = previousKey;
+	}
+});
+
 test("chat retries a temporary Gemini overload", async () => {
 	const previousKey = process.env.GEMINI_API_KEY;
 	const previousFetch = globalThis.fetch;

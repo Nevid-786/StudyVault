@@ -7,7 +7,7 @@
     "dev": "vite",
     "build": "vite build",
     "lint": "oxlint",
-    "test": "node --test src/features/revision/ragUtils.test.js",
+    "test": "node --test src/features/revision/ragUtils.test.js src/features/revision/geminiApiClient.test.js",
     "preview": "vite preview"
   },
   "dependencies": {

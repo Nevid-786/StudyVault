@@ -12,6 +12,13 @@ import {
   readDashboardPreferences,
   writeDashboardPreferences,
 } from '../config/dashboardPreferences'
+import {
+  clearUserGeminiApiKey,
+  getRagProvider,
+  hasUserGeminiApiKey,
+  RAG_PROVIDERS,
+  saveUserGeminiApiKey,
+} from '../features/revision/aiProvider'
 
 const filters = ['All', 'Upload', 'Download']
 
@@ -99,6 +106,30 @@ const StorageSync = () => {
   const user = useSelector((state) => state.auth.user)
   const accessToken = useSelector((state) => state.auth.googleAccessToken)
   const [destination, setDestination] = useState(localStorage.getItem('destination') || 'both')
+  const [ragProviderLoad] = useState(() => {
+    const provider = getRagProvider()
+    try {
+      return {
+        provider,
+        hasUserApiKey: hasUserGeminiApiKey(),
+        error: '',
+      }
+    } catch (error) {
+      const errorMessage = error instanceof Error
+        ? error.message
+        : 'Unable to read the Gemini API key for this tab.'
+      return {
+        provider,
+        hasUserApiKey: false,
+        error: provider === RAG_PROVIDERS.user ? errorMessage : '',
+      }
+    }
+  })
+  const ragProvider = ragProviderLoad.provider
+  const [hasUserApiKey, setHasUserApiKey] = useState(ragProviderLoad.hasUserApiKey)
+  const [userApiKeyDraft, setUserApiKeyDraft] = useState('')
+  const [ragSettingsError, setRagSettingsError] = useState(ragProviderLoad.error)
+  const [ragSettingsMessage, setRagSettingsMessage] = useState('')
   const [preferenceLoad] = useState(() => {
     try {
       return { preferences: readDashboardPreferences(), error: '' }
@@ -182,6 +213,33 @@ const StorageSync = () => {
       console.error('Unable to save dashboard preferences:', error)
       setDashboardPreferencesError(error instanceof Error ? error.message : 'Unable to save dashboard preferences.')
       setDashboardPreferencesMessage('')
+    }
+  }
+
+  const handleSaveUserApiKey = (event) => {
+    event.preventDefault()
+    try {
+      saveUserGeminiApiKey(userApiKeyDraft)
+      setHasUserApiKey(true)
+      setUserApiKeyDraft('')
+      setRagSettingsError('')
+      setRagSettingsMessage('Gemini key saved for this browser tab only. It has not been verified yet.')
+    } catch (error) {
+      setRagSettingsError(error instanceof Error ? error.message : 'Unable to save the Gemini API key.')
+      setRagSettingsMessage('')
+    }
+  }
+
+  const handleClearUserApiKey = () => {
+    try {
+      clearUserGeminiApiKey()
+      setHasUserApiKey(false)
+      setUserApiKeyDraft('')
+      setRagSettingsError('')
+      setRagSettingsMessage('Your Gemini key was removed from this tab.')
+    } catch (error) {
+      setRagSettingsError(error instanceof Error ? error.message : 'Unable to clear the Gemini API key.')
+      setRagSettingsMessage('')
     }
   }
 
@@ -483,6 +541,20 @@ const StorageSync = () => {
                 </button>
               </div>
             )}
+            {ragProvider === RAG_PROVIDERS.studyVault && hasUserApiKey && (
+              <div className="mt-4 flex flex-col gap-3 rounded-xl border border-slate-200 bg-slate-50 p-4 sm:flex-row sm:items-center sm:justify-between">
+                <p className="text-xs leading-5 text-slate-600">
+                  A personal Gemini key is still saved in this tab, but is not currently selected.
+                </p>
+                <button
+                  type="button"
+                  onClick={handleClearUserApiKey}
+                  className="shrink-0 rounded-lg border border-slate-300 bg-white px-3 py-2 text-xs font-semibold text-slate-700 transition hover:bg-slate-50"
+                >
+                  Clear saved key
+                </button>
+              </div>
+            )}
             {vaultError && (
               <p role="alert" className="rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700">
                 Local storage statistics could not be loaded: {vaultError}
@@ -722,6 +794,97 @@ const StorageSync = () => {
                       </label>
                     ))}
                   </div>
+                </section>
+
+                <section className="min-w-0 rounded-2xl border border-slate-100 bg-white p-5 shadow-sm sm:p-6">
+                  <div>
+                    <h2 className="font-semibold text-slate-900">Study assistant AI access</h2>
+                    <p className="mt-1 text-sm leading-5 text-slate-500">
+                      {ragProvider === RAG_PROVIDERS.user
+                        ? 'This deployment requires your own Gemini API key for study-material indexing and assistant replies.'
+                        : "This deployment uses StudyVault's configured Gemini service."}
+                    </p>
+                  </div>
+
+                  {ragProvider === RAG_PROVIDERS.user && (
+                    <div className="mt-4 space-y-4 rounded-xl border border-amber-200 bg-amber-50/70 p-4">
+                      <div className="space-y-2 text-xs leading-5 text-slate-700">
+                        <p>
+                          Your key is stored in this tab's session storage only. It is not sent to StudyVault's backend,
+                          saved in local storage, or included in vault backups. Requests containing the key and study
+                          text are sent directly to Google over HTTPS.
+                        </p>
+                        <p>
+                          Session storage is not encrypted and scripts running on this site can access it. Use a
+                          dedicated key, restrict it to the Generative Language API and your site where available,
+                          and clear it when finished. Create or manage keys in{' '}
+                          <a
+                            href="https://aistudio.google.com/apikey"
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="font-semibold text-indigo-700 underline hover:text-indigo-900"
+                          >
+                            Google AI Studio
+                          </a>.
+                        </p>
+                      </div>
+                      <form onSubmit={handleSaveUserApiKey} className="space-y-2">
+                        <label htmlFor="gemini-api-key" className="block text-sm font-semibold text-slate-800">
+                          Gemini API key
+                        </label>
+                        <div className="flex flex-col gap-2 sm:flex-row">
+                          <input
+                            id="gemini-api-key"
+                            name="gemini-api-key"
+                            type="password"
+                            autoComplete="off"
+                            spellCheck="false"
+                            value={userApiKeyDraft}
+                            onChange={(event) => setUserApiKeyDraft(event.target.value)}
+                            placeholder={hasUserApiKey ? 'Key saved for this tab' : 'Paste your Gemini API key'}
+                            className="h-11 min-w-0 flex-1 rounded-xl border border-slate-200 bg-white px-3 text-sm text-slate-700 outline-none transition focus:border-indigo-400 focus:ring-2 focus:ring-indigo-100"
+                          />
+                          <button
+                            type="submit"
+                            disabled={!userApiKeyDraft.trim()}
+                            className="h-11 shrink-0 rounded-xl bg-indigo-600 px-4 text-sm font-semibold text-white transition hover:bg-indigo-700 disabled:cursor-not-allowed disabled:opacity-50"
+                          >
+                            Save for this tab
+                          </button>
+                        </div>
+                        <p className="text-xs text-slate-500">
+                          {hasUserApiKey ? 'A key is saved in this tab. It will be sent only to Google when you use Gemini.' : 'No user key is saved. This mode will not fall back to StudyVault’s key.'}
+                        </p>
+                      </form>
+                      <button
+                        type="button"
+                        onClick={handleClearUserApiKey}
+                        disabled={!hasUserApiKey}
+                        className="rounded-lg border border-slate-300 bg-white px-3 py-2 text-xs font-semibold text-slate-700 transition hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-50"
+                      >
+                        Clear saved key
+                      </button>
+                    </div>
+                  )}
+                  {ragProvider === RAG_PROVIDERS.studyVault && hasUserApiKey && (
+                    <div className="mt-4 flex flex-col gap-3 rounded-xl border border-slate-200 bg-slate-50 p-4 sm:flex-row sm:items-center sm:justify-between">
+                      <p className="text-xs leading-5 text-slate-600">
+                        A personal Gemini key is saved in this tab but is not used by this deployment.
+                      </p>
+                      <button
+                        type="button"
+                        onClick={handleClearUserApiKey}
+                        className="shrink-0 rounded-lg border border-slate-300 bg-white px-3 py-2 text-xs font-semibold text-slate-700 transition hover:bg-slate-50"
+                      >
+                        Clear saved key
+                      </button>
+                    </div>
+                  )}
+                  {(ragSettingsMessage || ragSettingsError) && (
+                    <p role={ragSettingsError ? 'alert' : 'status'} className={`mt-3 text-xs ${ragSettingsError ? 'text-rose-700' : 'text-teal-700'}`}>
+                      {ragSettingsError || ragSettingsMessage}
+                    </p>
+                  )}
                 </section>
 
                 <section className="rounded-2xl border border-slate-100 bg-white p-5 shadow-sm sm:p-6">

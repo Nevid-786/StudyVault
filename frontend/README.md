@@ -5,9 +5,9 @@
 Use a recent Node.js LTS release. Configure Google OAuth before signing in:
 
 1. In Google Cloud Console, enable the Google Drive API, create an OAuth 2.0 **Web application** client, and add `http://localhost:5173` as both an authorized JavaScript origin and an authorized redirect URI.
-2. Copy `backend/.env.example` to `backend/.env` and set `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`, and a long random `JWT_SECRET`. Keep `GOOGLE_REDIRECT_URI=http://localhost:5173` for the local frontend.
-3. Copy `frontend/.env.example` to `frontend/.env` and set `VITE_CLIENT_ID` to the same client ID. Keep `VITE_API_URL=http://localhost:3000/api`.
-4. Create a Gemini API key in [Google AI Studio](https://aistudio.google.com/apikey) and add `GEMINI_API_KEY=<your-key>` to `backend/.env`. This is separate from the Google OAuth client secret.
+2. Copy `backend/.env.example` to `backend/.env` and set `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`, and a long random `JWT_SECRET`. Keep `GOOGLE_REDIRECT_URI=http://localhost:5173` for the local frontend. Set `RAG_PROVIDER_MODE` to `studyVault` (default) or `user`.
+3. Copy `frontend/.env.example` to `frontend/.env` and set `VITE_CLIENT_ID` to the same client ID. Keep `VITE_API_URL=http://localhost:3000/api` and set `VITE_RAG_PROVIDER_MODE` to the same provider mode as the backend.
+4. In `studyVault` mode, create a Gemini API key in [Google AI Studio](https://aistudio.google.com/apikey) and add `GEMINI_API_KEY=<your-key>` to `backend/.env`. This is separate from the Google OAuth client secret. Do not put an API key in a `VITE_` variable.
 5. In a terminal, start the backend:
 
    ```powershell
@@ -32,6 +32,8 @@ The backend listens on port `3000`. If you change either port, update the fronte
 
 Open **Revision / Exam Mode** and select **Build / refresh index** after saving materials. The app reads files stored in this browser and the signed-in user's `Study_Vault` Google Drive folder. Text extraction happens in the browser; text is sent to Gemini to create embeddings and the local vector index stays in this browser, separated by Google account. Study questions send relevant excerpts to Gemini for grounded answers and citations. General chat sends the conversation to Gemini without retrieving study files.
 
+The deployment controls the provider; users cannot switch between providers in the UI. The default `studyVault` mode uses the existing backend Gemini service. In `user` mode, **Storage & Sync** requires the user to enter their own Gemini API key, and embedding/chat requests go directly from the browser to Google. The key is kept in tab session storage, not sent to the StudyVault backend or included in vault backups. Session storage is not encrypted and is accessible to scripts running on the site, so users should use a dedicated, appropriately restricted key and clear it when finished. Their Google account's Gemini quota applies.
+
 Indexing supports PDF, DOCX, PPTX, TXT, Markdown, CSV, and images via OCR. Legacy DOC/PPT files need conversion. Rebuild the index after changing study materials.
 
 ## Local file previews
@@ -49,4 +51,4 @@ Each route loads its file by `lid` from IndexedDB through `subjectService.getFil
 
 ## Production API routing
 
-The Vercel frontend proxies `/api/*` requests to the Render backend. Production requests use the relative `/api` path so the browser receives the authentication cookie from the Vercel origin instead of treating Render as a third-party site. Keep `FRONTEND_URL` on Render set to the exact Vercel origin, and keep `JWT_SECRET` stable across deployments. The authentication cookie and JWT both expire after one hour.
+The Vercel frontend proxies `/api/*` requests to the Render backend. Production requests use the relative `/api` path so the browser receives the authentication cookie from the Vercel origin instead of treating Render as a third-party site. Set `VITE_RAG_PROVIDER_MODE` in Vercel and `RAG_PROVIDER_MODE` on Render to the same value (`studyVault` or `user`), then redeploy both services after changing the mode. In `user` mode, the Render backend rejects its own Gemini endpoints even if `GEMINI_API_KEY` is configured. Keep `FRONTEND_URL` on Render set to the exact Vercel origin, and keep `JWT_SECRET` stable across deployments. The authentication cookie and JWT both expire after one hour.
