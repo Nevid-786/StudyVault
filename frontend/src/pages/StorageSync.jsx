@@ -264,7 +264,7 @@ const StorageSync = () => {
     setSyncMessage('')
     setDprogress(null)
     setUprogress(null)
-
+     
     if (!accessToken) {
       setSyncError('Connect Google Drive before checking sync status.')
       return
@@ -294,6 +294,7 @@ const StorageSync = () => {
           kind: getFileKind(file),
         })),
       ])
+      const res = await SubjectService.createSubAndUnitSync(DFiles);
       setSyncMessage(`Sync check complete: ${UFiles.length} local file${UFiles.length === 1 ? '' : 's'} ready to upload and ${DFiles.length} Drive file${DFiles.length === 1 ? '' : 's'} ready to download.`)
     } catch (error) {
       console.error('Unable to check Google Drive sync status:', error)
