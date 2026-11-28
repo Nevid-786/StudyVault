@@ -4,12 +4,13 @@ const GOOGLE_TOKEN_URL = "https://oauth2.googleapis.com/token";
 const GOOGLE_USER_INFO_URL = "https://www.googleapis.com/oauth2/v2/userinfo";
 const JWT_ISSUER = "minor-project-api";
 const AUTH_COOKIE_NAME = "authToken";
-const JWT_MAX_AGE_MS = 60 * 60 * 1000;
+const JWT_MAX_AGE_SECONDS = 60 * 60;
+const JWT_MAX_AGE_MS = JWT_MAX_AGE_SECONDS * 1000;
 const isProduction = process.env.NODE_ENV === "production";
 const authCookieOptions = {
 	httpOnly: true,
 	secure: isProduction,
-	sameSite: isProduction ? "none" : "lax",
+	sameSite: "lax",
 	maxAge: JWT_MAX_AGE_MS,
 	path: "/",
 };
@@ -79,7 +80,7 @@ export const getGoogleAccessToken = async (req, res) => {
 				folderId: folderId
 			},
 			process.env.JWT_SECRET,
-			{ algorithm: "HS256", expiresIn: "3h", issuer: JWT_ISSUER }
+			{ algorithm: "HS256", expiresIn: JWT_MAX_AGE_SECONDS, issuer: JWT_ISSUER }
 		);
 
 		res.cookie(AUTH_COOKIE_NAME, token, authCookieOptions)
