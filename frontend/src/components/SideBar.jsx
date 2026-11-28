@@ -1,5 +1,5 @@
 import React from 'react'
-import { useNavigate, useLocation } from 'react-router-dom'
+import { Link, useNavigate, useLocation } from 'react-router-dom'
 import { useSelector } from 'react-redux'
 
 const navItems = [
@@ -106,6 +106,14 @@ const SideBar = () => {
             <div className="sidebar-storage-fill" style={{ width: '28%' }} />
           </div>
         </div>
+        <nav aria-label="Legal information" className="mt-4 flex items-center gap-4 border-t border-slate-200 pt-3 text-xs">
+          <Link to="/privacy" className="text-slate-500 transition hover:text-indigo-700 focus-visible:outline focus-visible:outline-2 focus-visible:outline-indigo-600">
+            Privacy
+          </Link>
+          <Link to="/terms" className="text-slate-500 transition hover:text-indigo-700 focus-visible:outline focus-visible:outline-2 focus-visible:outline-indigo-600">
+            Terms
+          </Link>
+        </nav>
       </div>
     </aside>
   )
