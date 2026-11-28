@@ -34,8 +34,9 @@ const AddNotes = () => {
   const [linkError, setLinkError] = useState('')
   const [fileError, setFileError] = useState('')
   const [uploadError, setUploadError] = useState('')
+  const [uploadMessage, setUploadMessage] = useState('')
   const [uploading, setUploading] = useState(false)
-  const [progress, setProgress] = useState(0);
+  const [progress, setProgress] = useState({})
 
   const addFiles = (newFiles) => {
     const allFiles = Array.from(newFiles)
@@ -45,7 +46,17 @@ const AddNotes = () => {
     setFileError(validFiles.length < allFiles.length ? 'Some files were skipped. Choose PDF, PPT, DOC, PNG, or JPG files.' : '')
     setFiles((current) => {
       const knownFiles = new Set(current.map((file) => `${file.name}-${file.size}`))
-      return [...current, ...validFiles.filter((file) => !knownFiles.has(`${file.name}-${file.size}`))]
+      const additions = validFiles
+        .filter((file) => !knownFiles.has(`${file.name}-${file.size}`))
+        .map((file) => ({
+          lid: crypto.randomUUID(),
+          name: file.name,
+          type: file.type,
+          size: file.size,
+          file,
+          isLink: false,
+        }))
+      return [...current, ...additions]
     })
   }
 
@@ -61,37 +72,16 @@ const AddNotes = () => {
     
   }
 
-const gdriveuploadFiles = async (fileDatas) => {
-  await Promise.all(
-    Array.from(fileDatas).map(async (filedata) => {
-      try {
-        const result = await GoogleDriveService.uploadFile(
-          folderId,
-          filedata.file,
-          accessToken,
-          semester,
-          subject,
-          unit,
-          filedata.lid,
-         
-          (percent) => {
-            setProgress((prev) => ({
-              ...prev,
-              [filedata.name]: percent,
-            }))
-          }
-        )
+  const updateProgress = (lid, updates) => {
+    setProgress((current) => ({
+      ...current,
+      [lid]: { ...current[lid], ...updates },
+    }))
+  }
 
-        console.log('Uploaded:', result)
-      } catch (error) {
-        console.error(`Failed: ${file.name}`, error)
-      }
-    })
-  )
-}
-
-  const handleuploadFiles = async () => {
+  const handleUploadFiles = async () => {
     setUploadError('')
+    setUploadMessage('')
     if (files.length === 0) {
       setFileError('No files selected for upload.')
       return
@@ -100,52 +90,121 @@ const gdriveuploadFiles = async (fileDatas) => {
       setUploadError('Open Add material from a unit so the files can be saved to the correct location.')
       return
     }
-    const fileDatas=files.map((file) => {
-      return {
-        lid: crypto.randomUUID(),
-        name: file.name,
-        type: file.type,
-        size: file.size,
-        file: file,
-        isLink: file.isLink || false,
-      }
-    })
+    if (!['device', 'drive', 'both'].includes(destination)) {
+      setUploadError('Choose a valid save destination before continuing.')
+      return
+    }
+    const saveLocally = destination === 'device' || destination === 'both'
+    const saveToDrive = destination === 'drive' || destination === 'both'
+    if (saveToDrive && destination === 'drive' && (!accessToken || !folderId)) {
+      setUploadError(!accessToken
+        ? 'Sign in to Google Drive before uploading there.'
+        : 'A Google Drive destination folder is not available.')
+      return
+    }
+
     setUploading(true)
+    setProgress({})
     try {
-      if(destination === 'drive' || destination === 'both') {
-        await gdriveuploadFiles(fileDatas)
-      }
-      if(destination === 'device' || destination === 'both') {
-      await Promise.all(fileDatas.map((filedata) => localDB.upload(
-        filedata.file,
-        filedata.name,
-        semester,
-        subject,
-        unit,
-        filedata.type,
-        filedata.size,
-        filedata.lid
-      )))
+      const localResults = new Map()
+      const errors = new Map()
+      const metadataWarnings = []
+
+      // Save every local copy before starting network uploads, so Drive latency cannot hold local saves hostage.
+      if (saveLocally) {
+        for (const file of files) {
+          updateProgress(file.lid, { message: 'Saving to this device…' })
+          try {
+            await localDB.upload(file.file, file.name, semester, subject, unit, file.type, file.size, file.lid)
+            localResults.set(file.lid, true)
+            updateProgress(file.lid, { message: 'Saved on this device' })
+          } catch (localError) {
+            localResults.set(file.lid, false)
+            errors.set(file.lid, `Local save failed: ${localError instanceof Error ? localError.message : 'unknown error'}`)
+            updateProgress(file.lid, { message: 'Local save failed' })
+          }
         }
-      const params = new URLSearchParams({ semester, subject, unit })
-     
-    } catch (error) {
-      console.error('Unable to upload selected files:', error)
-      setUploadError(error.message || 'Unable to save the selected files.')
+      }
+
+      if (saveToDrive) {
+        for (const file of files) {
+          if (destination === 'both' && localResults.get(file.lid) !== true) {
+            updateProgress(file.lid, { message: 'Drive upload skipped because the local save failed' })
+            continue
+          }
+          if (!accessToken || !folderId) {
+            const reason = !accessToken
+              ? 'Sign in to Google Drive before uploading there.'
+              : 'A Google Drive destination folder is not available.'
+            errors.set(file.lid, reason)
+            updateProgress(file.lid, { drivePercent: null, message: 'Google Drive is not ready' })
+            continue
+          }
+
+          updateProgress(file.lid, { drivePercent: 0, message: 'Uploading to Google Drive…' })
+          try {
+            const uploadedFile = await GoogleDriveService.uploadFile(
+              folderId,
+              file.file,
+              accessToken,
+              semester,
+              subject,
+              unit,
+              file.lid,
+              (percent) => updateProgress(file.lid, {
+                drivePercent: percent,
+                message: `Uploading to Google Drive (${percent}%)`,
+              }),
+            )
+            if (localResults.get(file.lid)) {
+              try {
+                const linked = await localDB.setDriveFileId(file.lid, uploadedFile.id)
+                if (!linked) metadataWarnings.push(`${file.name}: its Drive copy could not be linked to the local record.`)
+              } catch (metadataError) {
+                console.error('Unable to save the Drive file ID:', metadataError)
+                metadataWarnings.push(`${file.name}: its Drive copy could not be linked to the local record.`)
+              }
+            }
+            updateProgress(file.lid, { drivePercent: 100, message: 'Saved to Google Drive' })
+          } catch (driveError) {
+            console.error(`Unable to upload ${file.name} to Google Drive:`, driveError)
+            errors.set(file.lid, `Google Drive upload failed: ${driveError instanceof Error ? driveError.message : 'unknown error'}`)
+            updateProgress(file.lid, { message: 'Google Drive upload failed' })
+          }
+        }
+      }
+
+      const pendingFiles = files.filter((file) => errors.has(file.lid))
+      if (pendingFiles.length > 0) {
+        setFiles(pendingFiles)
+        const messages = pendingFiles.map((file) => `${file.name}: ${errors.get(file.lid)}`)
+        setUploadError(`${files.length - pendingFiles.length} of ${files.length} files completed. Fix the issue below and retry the remaining files. ${messages.join(' ')}`)
+        return
+      }
+
+      const destinationLabel = destination === 'both'
+        ? 'this device and Google Drive'
+        : destination === 'drive' ? 'Google Drive' : 'this device'
+      setFiles([])
+      setProgress({})
+      setIsReviewing(false)
+      setUploadMessage(`${files.length} ${files.length === 1 ? 'file was' : 'files were'} saved to ${destinationLabel}.${metadataWarnings.length ? ` ${metadataWarnings.join(' ')}` : ''}`)
     } finally {
-      
+      setUploading(false)
     }
   }
-  console.log(progress);
+
   const addWebLink = (event) => {
     event.preventDefault()
     try {
       const url = new URL(webLink)
       if (!['http:', 'https:'].includes(url.protocol)) throw new Error('Unsupported URL')
       setLinkError('')
+      const name = `${url.hostname}${url.pathname === '/' ? '' : url.pathname}.url`
+      const file = new File([url.href], name, { type: 'text/uri-list' })
       setFiles((current) => [
         ...current,
-        { name: url.hostname + url.pathname, size: 0, isLink: true },
+        { lid: crypto.randomUUID(), name, type: file.type, size: file.size, file, isLink: true },
       ])
       setWebLink('')
       setShowLinkForm(false)
@@ -181,6 +240,7 @@ const gdriveuploadFiles = async (fileDatas) => {
 
             {!isReviewing ? (
               <>
+                {uploadMessage && <p role="status" className="file-selection-error">{uploadMessage}</p>}
                 <div className="add-notes-body">
                   <div className="import-options">
                     <button className="import-option" type="button" onClick={() => fileInput.current?.click()}>
@@ -273,7 +333,7 @@ const gdriveuploadFiles = async (fileDatas) => {
                       Private upload • OCR ready
                     </span>
                     {files.length > 0 && (
-                      <button className="clear-files-btn" type="button" onClick={() => { setFiles([]); setFileError('') }}>
+                      <button className="clear-files-btn" type="button" onClick={() => { setFiles([]); setProgress({}); setFileError('') }}>
                         Clear
                       </button>
                     )}
@@ -305,7 +365,7 @@ const gdriveuploadFiles = async (fileDatas) => {
                   </span>
                   <div className="add-notes-actions">
                     <button type="button" className="cancel-import-btn" onClick={() => navigate('/')}>Cancel</button>
-                    <button type="button" className="continue-review-btn" disabled={files.length === 0 || uploading} onClick={(e) => {handleuploadFiles();setIsReviewing(true)}}>
+                    <button type="button" className="continue-review-btn" disabled={files.length === 0 || uploading} onClick={() => { setUploadError(''); setUploadMessage(''); setIsReviewing(true) }}>
                       Continue to Review <span className="pending-count">{files.length} files pending</span>
                       <svg viewBox="0 0 24 24"><path d="M5 12h14m-6-6 6 6-6 6" /></svg>
                     </button>
@@ -322,10 +382,15 @@ const gdriveuploadFiles = async (fileDatas) => {
                   </div>
                   <ul className="review-file-list">
                     {files.map((file, index) => (
-                      <li key={`${file.name}-${file.size}-${index}`}>
+                      <li key={file.lid || `${file.name}-${file.size}-${index}`}>
                         <span className="review-file-icon">▣</span>
-                        <span className="review-file-name">{file.name}</span>
-                        <span className="review-file-name">{progress[file.name]}%</span>
+                        <span className="min-w-0 flex-1">
+                          <span className="review-file-name block" title={file.name}>{file.name}</span>
+                          <span className="review-note">{progress[file.lid]?.message || 'Ready to save'}</span>
+                        </span>
+                        {progress[file.lid]?.drivePercent != null && (
+                          <span className="review-file-size">{progress[file.lid].drivePercent}%</span>
+                        )}
                         <span className="review-file-size">{file.isLink ? 'Web link' : formatSize(file.size)}</span>
                       </li>
                     ))}
@@ -339,8 +404,8 @@ const gdriveuploadFiles = async (fileDatas) => {
                   </span>
                   <div className="add-notes-actions">
                     <button type="button" className="cancel-import-btn" onClick={() => setIsReviewing(false)}>Back to files</button>
-                    <button type="button" className="bg-blue-600 rounded-lg p-1.5 text-white font-serif text-xs" disabled={uploading} onClick={handleuploadFiles}>
-                      {uploading ? 'Saving…' : 'Upload Files'}
+                    <button type="button" className="bg-blue-600 rounded-lg p-1.5 text-white font-serif text-xs" disabled={uploading} onClick={handleUploadFiles}>
+                      {uploading ? 'Saving…' : 'Save files'}
                     </button>
                   </div>
                 </footer>

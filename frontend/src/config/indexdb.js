@@ -1,7 +1,7 @@
 const DATABASE_NAME = 'studyVault'
 const BACKUP_FORMAT = 'study-vault-backup'
 const BACKUP_VERSION = 1
-const APP_SETTINGS = ['destination']
+const APP_SETTINGS = ['destination', 'studyVault.dashboardPreferences']
 
 const toBase64 = (buffer) => {
   const bytes = new Uint8Array(buffer)
@@ -312,6 +312,37 @@ export default class localDB {
     )
   }
 
+  static async clearAllFiles() {
+    return new Promise((resolve, reject) => {
+      const req = indexedDB.open(DATABASE_NAME, 1)
+
+      req.onerror = () => reject(req.error || new Error('Unable to open the study vault'))
+      req.onsuccess = () => {
+        const db = req.result
+        try {
+          const tx = db.transaction('files', 'readwrite')
+          const store = tx.objectStore('files')
+          const countRequest = store.count()
+          const clearRequest = store.clear()
+          let deletedCount = 0
+
+          countRequest.onsuccess = () => { deletedCount = countRequest.result }
+          countRequest.onerror = () => reject(countRequest.error || new Error('Unable to count saved files'))
+          clearRequest.onerror = () => reject(clearRequest.error || new Error('Unable to clear saved files'))
+          tx.oncomplete = () => {
+            db.close()
+            resolve(deletedCount)
+          }
+          tx.onerror = () => reject(tx.error || new Error('Unable to clear saved files'))
+          tx.onabort = () => reject(tx.error || new Error('File cleanup was aborted'))
+        } catch (error) {
+          db.close()
+          reject(error)
+        }
+      }
+    })
+  }
+
   static async getallfileInAUnit(semester, subject, unit) {
     if ([semester, subject, unit].some((value) => value == null || value === '')) {
       throw new TypeError('Semester, subject, and unit are required to load files')
@@ -354,33 +385,47 @@ export default class localDB {
     })
   }
 
-  static async upload(file, name, semester, subject, unit,type,size,lid=null) {
+  static async upload(file, name, semester, subject, unit, type, size, lid = null) {
     if ([semester, subject, unit].some((value) => value == null || value === '')) {
       throw new TypeError('Semester, subject, and unit are required to save a file')
     }
 
     return new Promise((resolve, reject) => {
-      const req = indexedDB.open("studyVault", 1);
+      const req = indexedDB.open(DATABASE_NAME, 1)
 
       req.onsuccess = () => {
-        const db = req.result;
+        const db = req.result
         try {
-          const tx = db.transaction("files", "readwrite");
-    
-          const res = tx.objectStore("files").add({
+          const tx = db.transaction('files', 'readwrite')
+          const store = tx.objectStore('files')
+          const record = {
             name,
             file,
-            lid:lid,
+            lid,
             semester: String(semester),
             subject: String(subject),
             unit: String(unit),
             type,
-            size
-          });
+            size,
+          }
           let fileId
 
-          res.onsuccess = () => { fileId = res.result }
-          res.onerror = () => reject(res.error || new Error('Unable to save file'))
+          const writeRecord = (existingRecord) => {
+            const request = existingRecord
+              ? store.put({ ...existingRecord, ...record })
+              : store.add(record)
+            request.onsuccess = () => { fileId = request.result }
+            request.onerror = () => reject(request.error || new Error('Unable to save file'))
+          }
+
+          if (lid) {
+            const lookup = store.index('by_lid').get(lid)
+            lookup.onsuccess = () => writeRecord(lookup.result)
+            lookup.onerror = () => reject(lookup.error || new Error('Unable to check for an existing file'))
+          } else {
+            writeRecord(null)
+          }
+
           tx.oncomplete = () => {
             db.close()
             resolve(fileId)
@@ -394,8 +439,7 @@ export default class localDB {
       };
 
       req.onerror = () => {
-        console.log(req.error)
-        reject(req.error);
+        reject(req.error || new Error('Unable to open the study vault'))
       };
     });
   }
@@ -429,9 +473,148 @@ export default class localDB {
     })
   }
 
-  static async deleteFile(lid) {
-    console.log("Deleting file with lid:", lid)
-    if (!lid) {
+  static async getReadingProgress(lid) {
+    if (!lid) throw new TypeError('File ID is required to retrieve reading progress')
+
+    return new Promise((resolve, reject) => {
+      const request = indexedDB.open(DATABASE_NAME, 1)
+      request.onerror = () => reject(request.error || new Error('Unable to open the study vault'))
+      request.onsuccess = () => {
+        const db = request.result
+        try {
+          const tx = db.transaction('pdfProgress', 'readonly')
+          const lookup = tx.objectStore('pdfProgress').index('by_lid').get(lid)
+          let progress = null
+          lookup.onsuccess = () => { progress = lookup.result || null }
+          lookup.onerror = () => reject(lookup.error || new Error('Unable to retrieve reading progress'))
+          tx.oncomplete = () => {
+            db.close()
+            resolve(progress)
+          }
+          tx.onerror = () => reject(tx.error || new Error('Unable to retrieve reading progress'))
+          tx.onabort = () => reject(tx.error || new Error('Reading progress lookup was aborted'))
+        } catch (error) {
+          db.close()
+          reject(error)
+        }
+      }
+    })
+  }
+
+  static async saveReadingProgress(lid, updates) {
+    if (!lid) throw new TypeError('File ID is required to save reading progress')
+
+    return new Promise((resolve, reject) => {
+      const request = indexedDB.open(DATABASE_NAME, 1)
+      request.onerror = () => reject(request.error || new Error('Unable to open the study vault'))
+      request.onsuccess = () => {
+        const db = request.result
+        try {
+          const tx = db.transaction('pdfProgress', 'readwrite')
+          const store = tx.objectStore('pdfProgress')
+          const lookup = store.index('by_lid').get(lid)
+          let savedProgress
+
+          lookup.onsuccess = () => {
+            const existing = lookup.result || {}
+            savedProgress = {
+              ...existing,
+              ...updates,
+              lid,
+              updatedAt: Date.now(),
+            }
+            const write = store.put(savedProgress)
+            write.onerror = () => reject(write.error || new Error('Unable to save reading progress'))
+          }
+          lookup.onerror = () => reject(lookup.error || new Error('Unable to save reading progress'))
+          tx.oncomplete = () => {
+            db.close()
+            resolve(savedProgress)
+          }
+          tx.onerror = () => reject(tx.error || new Error('Unable to save reading progress'))
+          tx.onabort = () => reject(tx.error || new Error('Reading progress save was aborted'))
+        } catch (error) {
+          db.close()
+          reject(error)
+        }
+      }
+    })
+  }
+
+  static async getLastOpenedFile() {
+    return new Promise((resolve, reject) => {
+      const request = indexedDB.open(DATABASE_NAME, 1)
+      request.onerror = () => reject(request.error || new Error('Unable to open the study vault'))
+      request.onsuccess = () => {
+        const db = request.result
+        try {
+          const tx = db.transaction(['files', 'pdfProgress'], 'readonly')
+          const fileRequest = tx.objectStore('files').getAll()
+          const progressRequest = tx.objectStore('pdfProgress').getAll()
+          let fileRecords = []
+          let progressRecords = []
+          fileRequest.onsuccess = () => { fileRecords = fileRequest.result }
+          progressRequest.onsuccess = () => { progressRecords = progressRequest.result }
+          fileRequest.onerror = () => reject(fileRequest.error || new Error('Unable to find the last opened file'))
+          progressRequest.onerror = () => reject(progressRequest.error || new Error('Unable to find the last opened file'))
+          tx.oncomplete = () => {
+            db.close()
+            const filesByLid = new Map(fileRecords.map((record) => [record.lid, record]))
+            const latest = progressRecords
+              .filter((record) => filesByLid.has(record.lid))
+              .sort((left, right) => (right.lastOpenedAt || 0) - (left.lastOpenedAt || 0))[0]
+            resolve(latest ? { file: filesByLid.get(latest.lid), progress: latest } : null)
+          }
+          tx.onerror = () => reject(tx.error || new Error('Unable to find the last opened file'))
+          tx.onabort = () => reject(tx.error || new Error('Last opened file lookup was aborted'))
+        } catch (error) {
+          db.close()
+          reject(error)
+        }
+      }
+    })
+  }
+
+  static async setDriveFileId(lid, driveFileId) {
+    if (!lid || !driveFileId) throw new TypeError('Local and Drive file IDs are required')
+
+    return new Promise((resolve, reject) => {
+      const request = indexedDB.open(DATABASE_NAME, 1)
+      request.onerror = () => reject(request.error || new Error('Unable to open the study vault'))
+      request.onsuccess = () => {
+        const db = request.result
+        try {
+          const tx = db.transaction('files', 'readwrite')
+          const store = tx.objectStore('files')
+          const lookup = store.index('by_lid').get(lid)
+          let updated = false
+          lookup.onsuccess = () => {
+            if (!lookup.result) return
+            const write = store.put({ ...lookup.result, driveFileId })
+            write.onsuccess = () => { updated = true }
+            write.onerror = () => reject(write.error || new Error('Unable to save the Drive file ID'))
+          }
+          lookup.onerror = () => reject(lookup.error || new Error('Unable to save the Drive file ID'))
+          tx.oncomplete = () => {
+            db.close()
+            resolve(updated)
+          }
+          tx.onerror = () => reject(tx.error || new Error('Unable to save the Drive file ID'))
+          tx.onabort = () => reject(tx.error || new Error('Drive file ID update was aborted'))
+        } catch (error) {
+          db.close()
+          reject(error)
+        }
+      }
+    })
+  }
+
+  static async deleteFile(lidOrRecord, fileId = null) {
+    const record = lidOrRecord && typeof lidOrRecord === 'object' ? lidOrRecord : null
+    const lid = record?.lid ?? lidOrRecord
+    const primaryKey = fileId ?? record?.id ?? (typeof lidOrRecord === 'number' ? lidOrRecord : null)
+    const lookupByLid = typeof lid === 'string' && lid.length > 0
+    if (!lookupByLid && primaryKey == null) {
       throw new TypeError('File ID is required to delete a file')
     }
 
@@ -443,20 +626,20 @@ export default class localDB {
         try {
           const tx = db.transaction('files', 'readwrite')
           const store = tx.objectStore('files')
-          
-          const request = store.index('by_lid').getKey(lid);
+          let deleted = false
+          const request = lookupByLid
+            ? store.index('by_lid').getKey(lid)
+            : store.getKey(primaryKey)
           request.onsuccess = () => {
-            console.log('Key to delete:', request.result)
-                  const deleteRequest = store.delete(request.result)
-                  deleteRequest.onsuccess = () => {
-                  console.log('File deleted successfully for key:', request.result)
-          }
-
+            if (request.result === undefined) return
+            const deleteRequest = store.delete(request.result)
+            deleteRequest.onsuccess = () => { deleted = true }
+            deleteRequest.onerror = () => reject(deleteRequest.error || new Error('Unable to delete file'))
           }
 
           tx.oncomplete = () => {
             db.close()
-            resolve(true)
+            resolve(deleted)
           }
           tx.onerror = () => reject(tx.error || new Error('Unable to delete file'))
           tx.onabort = () => reject(tx.error || new Error('File deletion was aborted'))

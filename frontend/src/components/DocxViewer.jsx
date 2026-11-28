@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from 'react'
 import { renderAsync } from 'docx-preview'
 import './DocxViewer.css'
 
-const DocxViewer = ({ file, fileName, fileType }) => {
+const DocxViewer = ({ file, fileName, fileType, initialPage = 1, onProgressChange }) => {
   const containerRef = useRef(null)
   const styleContainerRef = useRef(null)
   const pageElements = useRef([])
@@ -14,6 +14,10 @@ const DocxViewer = ({ file, fileName, fileType }) => {
   const pageCount = isCurrentResult ? renderResult.pageCount : 0
   const loading = !isCurrentResult
   const error = isCurrentResult ? renderResult.error : null
+
+  useEffect(() => {
+    if (pageCount) onProgressChange?.({ pageNumber, pageCount })
+  }, [onProgressChange, pageCount, pageNumber])
 
   useEffect(() => {
     let active = true
@@ -40,8 +44,10 @@ const DocxViewer = ({ file, fileName, fileType }) => {
         if (pages.length === 0) throw new Error('No document pages could be rendered.')
         pageElements.current = pages
         if (active) {
-          setPageNumber(1)
+          const targetPage = Math.min(Math.max(1, initialPage), pages.length)
+          setPageNumber(targetPage)
           setRenderResult({ file, pageCount: pages.length, error: null })
+          pages[targetPage - 1]?.scrollIntoView({ block: 'start' })
         }
       } catch (renderError) {
         container.replaceChildren()
@@ -64,7 +70,7 @@ const DocxViewer = ({ file, fileName, fileType }) => {
       styleContainer.replaceChildren()
       pageElements.current = []
     }
-  }, [file, fileName, fileType])
+  }, [file, fileName, fileType, initialPage])
 
   const changeZoom = (amount) => {
     setScale((current) => Math.min(1.6, Math.max(0.7, Number((current + amount).toFixed(2)))))

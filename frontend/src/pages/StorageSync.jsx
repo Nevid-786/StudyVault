@@ -1,21 +1,41 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useSelector } from 'react-redux'
+import { useNavigate } from 'react-router-dom'
 import SideBar from '../components/SideBar'
 import TopBar from '../components/TopBar'
 import { syncFilesWithGoogleDrive } from '../config/sync'
 import GoogleDriveService from '../services/googleDrive'
 import localDB from '../config/indexdb'
 import SubjectService from '../services/subjectService'
+import {
+  DEFAULT_DASHBOARD_PREFERENCES,
+  readDashboardPreferences,
+  writeDashboardPreferences,
+} from '../config/dashboardPreferences'
 
-const activityItems = [
-  { id: 1, name: 'Maxwell_Equations_Electromagnetism.pdf', subject: 'Physics', detail: '4.8 MB', status: 'Synced', time: '2m ago', kind: 'PDF' },
-  { id: 2, name: 'Orbital_Hybridization_Reaction_Kinetics.pptx', subject: 'Chemistry', detail: '13.6 MB', status: 'Synced', time: '14m ago', kind: 'PPT' },
-  { id: 3, name: 'Differential_Calculus_Board_Capture.png', subject: 'Mathematics', detail: 'Queued (Wi-Fi only)', status: 'Pending', time: '2.4 MB', kind: 'IMG' },
-  { id: 4, name: 'RISC-V_Hardware_Manual_v2.pdf', subject: 'CS-310', detail: 'Conflict auto-merged', status: 'Synced', time: 'Resolved', kind: 'PDF' },
-  { id: 5, name: 'Biochem_Lab_Analysis_Report.pdf', subject: 'Biology', detail: 'Drive quota timeout', status: 'Errors', time: 'Retry', kind: 'PDF' },
-]
+const filters = ['All', 'Upload', 'Download']
 
-const filters = ['All', 'Synced', 'Pending', 'Errors']
+const formatBytes = (value) => {
+  const bytes = Number(value) || 0
+  if (bytes < 1024) return `${bytes} B`
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`
+  if (bytes < 1024 * 1024 * 1024) return `${(bytes / (1024 * 1024)).toFixed(1)} MB`
+  return `${(bytes / (1024 * 1024 * 1024)).toFixed(2)} GB`
+}
+
+const getFileKind = (file) => {
+  const extension = file.name?.split('.').pop()
+  return extension ? extension.toUpperCase() : 'FILE'
+}
+
+const getFileCategory = (file) => {
+  const type = (file.type || file.mimeType || '').toLowerCase()
+  const extension = file.name?.split('.').pop()?.toLowerCase()
+  if (type === 'application/pdf' || extension === 'pdf') return 'pdf'
+  if (type.includes('presentation') || ['ppt', 'pptx'].includes(extension)) return 'presentations'
+  if (type.startsWith('image/') || ['png', 'jpg', 'jpeg', 'gif', 'webp', 'bmp', 'svg'].includes(extension)) return 'images'
+  return 'other'
+}
 
 const Icon = ({ name, size = 18, className = '' }) => {
   const paths = {
@@ -75,43 +95,96 @@ const StatCard = ({ icon, iconClass, title, badge, children, footer }) => (
 )
 
 const StorageSync = () => {
+  const navigate = useNavigate()
   const user = useSelector((state) => state.auth.user)
   const accessToken = useSelector((state) => state.auth.googleAccessToken)
   const [destination, setDestination] = useState(localStorage.getItem('destination') || 'both')
-  const [preferences, setPreferences] = useState({
-    autoSync: true,
-    wifiOnly: true,
-    offlineFiles: true,
-    backgroundOcr: true,
+  const [preferenceLoad] = useState(() => {
+    try {
+      return { preferences: readDashboardPreferences(), error: '' }
+    } catch {
+      return {
+        preferences: DEFAULT_DASHBOARD_PREFERENCES,
+        error: 'Saved dashboard preferences are invalid. Change a setting below to replace them.',
+      }
+    }
   })
+  const [dashboardPreferences, setDashboardPreferences] = useState(preferenceLoad.preferences)
+  const [dashboardPreferencesError, setDashboardPreferencesError] = useState(preferenceLoad.error)
+  const [dashboardPreferencesMessage, setDashboardPreferencesMessage] = useState('')
   const folderId = useSelector((state) => state.auth.folderId)
-  const [conflictStrategy, setConflictStrategy] = useState('Ask every time (Show interactive diff)')
   const [activeFilter, setActiveFilter] = useState('All')
-  const [visibleActivity, setVisibleActivity] = useState(activityItems)
+  const [visibleActivity, setVisibleActivity] = useState([])
   const [syncing, setSyncing] = useState(false)
   const [syncMessage, setSyncMessage] = useState('')
   const [syncError, setSyncError] = useState('')
-  const [usedStorage, setUsedStorage] = useState("")
-  const [storageAllocated, setStorageAllocated] = useState("");
-  const [ufiles, setUfiles] = useState([]);
-  const [dfiles, setDfiles] = useState([]);
-  const [Uprogress, setUprogress] = useState(null); //uploadprogress
-  const [Dprogress, setDprogress] = useState(null); //uploadprogress
+  const [vaultFiles, setVaultFiles] = useState([])
+  const [vaultSubjects, setVaultSubjects] = useState([])
+  const [storageEstimate, setStorageEstimate] = useState(null)
+  const [vaultError, setVaultError] = useState('')
+  const [cacheBusy, setCacheBusy] = useState(false)
+  const [cacheMessage, setCacheMessage] = useState('')
+  const [cacheError, setCacheError] = useState('')
+  const [ufiles, setUfiles] = useState([])
+  const [dfiles, setDfiles] = useState([])
+  const [Uprogress, setUprogress] = useState(null)
+  const [Dprogress, setDprogress] = useState(null)
   const [backupBusy, setBackupBusy] = useState(false)
   const [backupMessage, setBackupMessage] = useState('')
   const [backupError, setBackupError] = useState('')
   const [pendingBackup, setPendingBackup] = useState(null)
   const importInputRef = useRef(null)
 
-
   const displayedActivity = useMemo(
-    () => visibleActivity.filter((item) => activeFilter === 'All' || item.status === activeFilter),
+    () => visibleActivity.filter((item) => activeFilter === 'All' || item.action === activeFilter),
     [activeFilter, visibleActivity],
   )
 
-  const togglePreference = (name) => {
-    setPreferences((current) => ({ ...current, [name]: !current[name] }))
+  const fileComposition = useMemo(() => {
+    const counts = { pdf: 0, presentations: 0, images: 0, other: 0 }
+    vaultFiles.forEach((file) => { counts[getFileCategory(file)] += 1 })
+    return counts
+  }, [vaultFiles])
+  const refreshVaultStats = useCallback(async () => {
+    const [fileRows, subjectRows] = await Promise.all([
+      localDB.getallfile(),
+      SubjectService.getAllSubjects(),
+    ])
+    if (!Array.isArray(fileRows) || !Array.isArray(subjectRows)) {
+      throw new TypeError('Local vault returned invalid storage statistics')
+    }
+
+    setVaultFiles(fileRows)
+    setVaultSubjects(subjectRows)
+    setVaultError('')
+
+    const estimate = typeof navigator.storage?.estimate === 'function'
+      ? await navigator.storage.estimate()
+      : null
+    setStorageEstimate(estimate ? { usage: estimate.usage || 0, quota: estimate.quota || 0 } : null)
+  }, [])
+
+  useEffect(() => {
+    refreshVaultStats().catch((error) => {
+      console.error('Unable to load local storage statistics:', error)
+      setVaultError(error instanceof Error ? error.message : 'Unable to load local vault statistics.')
+    })
+  }, [refreshVaultStats])
+
+  const updateDashboardPreference = (name, value) => {
+    const updated = { ...dashboardPreferences, [name]: value }
+    try {
+      writeDashboardPreferences(updated)
+      setDashboardPreferences(updated)
+      setDashboardPreferencesError('')
+      setDashboardPreferencesMessage('Dashboard preferences saved on this browser.')
+    } catch (error) {
+      console.error('Unable to save dashboard preferences:', error)
+      setDashboardPreferencesError(error instanceof Error ? error.message : 'Unable to save dashboard preferences.')
+      setDashboardPreferencesMessage('')
+    }
   }
+
   const handleExportBackup = async () => {
     setBackupBusy(true)
     setBackupError('')
@@ -166,7 +239,13 @@ const StorageSync = () => {
       setBackupMessage(`Backup ${modeLabel}: ${counts.imported} record${counts.imported === 1 ? '' : 's'} imported${counts.skipped ? `, ${counts.skipped} existing record${counts.skipped === 1 ? '' : 's'} skipped` : ''}.`)
       setPendingBackup(null)
       setDestination(localStorage.getItem('destination') || 'both')
-      await checkStorageUsage()
+      try {
+        setDashboardPreferences(readDashboardPreferences())
+        setDashboardPreferencesError('')
+      } catch {
+        setDashboardPreferencesError('The restored dashboard preferences are invalid. Change a setting below to replace them.')
+      }
+      await refreshVaultStats()
     } catch (error) {
       console.error('Unable to restore the Study Vault backup:', error)
       setBackupError(error.message || 'Could not restore the vault backup.')
@@ -175,108 +254,16 @@ const StorageSync = () => {
     }
   }
 
-  async function checkStorageUsage() {
-    if (navigator.storage && navigator.storage.estimate) {
-      const { usage, quota, usageDetails } = await navigator.storage.estimate();
-
-      console.log(`Used space: ${usage} bytes (${(usage / 1024 / 1024).toFixed(2)} MB)`);
-      console.log(`Total quota: ${quota} bytes (${(quota / 1024 / 1024).toFixed(2)} MB)`);
-      setUsedStorage((usage / 1024 / 1024).toFixed(2))
-      setStorageAllocated((quota / 1024 / 1024 / 1024).toFixed(2))
-      // Detailed breakdown (Supported in Chrome, Edge, Opera)
-      if (usageDetails) {
-        console.log('Breakdown:', usageDetails);
-        // e.g., { indexedDB: 123456, caches: 654321, ... }
-      }
-    } else {
-      console.log('Storage Estimation API not supported.');
-    }
-  }
-
   useEffect(() => {
-    checkStorageUsage();
-
-    return () => {
-
-    }
-  }, [])
-  useEffect(() => {
-    localStorage.setItem("destination", destination);
-
-
+    localStorage.setItem('destination', destination)
   }, [destination])
 
-
-  const handle_download_Sync = async () => {
-    
-    const download_result = await Promise.all(dfiles.map(async (file) => {
-      const downloadedFile = await GoogleDriveService.downloadFile(file.id, accessToken,
-        ({ progress }) => {
-          setDprogress((prev) => ({
-            ...prev,
-            [file.appProperties.lid]: progress,
-          }))
-        },
-        file.mimeType
-      )
-      const data = {
-        file: downloadedFile,
-        lid: file.appProperties.lid,
-        subject: file.appProperties.subject,
-        semester: file.appProperties.semester,
-        unit: file.appProperties.unit,
-        name: file.name,
-        type: file.mimeType,
-        size: file.size
-
-      }
-      return data;
-    }))
-    console.log("download_result", download_result)
-    download_result.forEach(async (file) => {
-      const res = await localDB.upload(file.file, file.name, file.semester, file.subject, file.unit, file.type, file.size, file.lid)
-      console.log("File saved to IndexedDB with ID:", res);
-    }
-    )
-    setDfiles([]);
-    setUprogress(null);
-    setSyncMessage("Files Downloaded SuccessFully");
-
-  }
-  const handle_upload_sync = async () => {
-
-
-
-    const result = await SubjectService.createSubAndUnitSync(dfiles);
-    await Promise.all(ufiles.map(async (file) => {
-      // Upload each file to Google Drive
-      if (!folderId) { console.log("No root Folder found") };
-      await GoogleDriveService.uploadFile(
-        folderId,
-        file.file,
-        accessToken,
-        file.semester,
-        file.subject,
-        file.unit,
-        file.lid,
-        (percent) => {
-          setUprogress((prev) => ({
-            ...prev,
-            [file.lid]: percent,
-          }))
-        })
-    }))
-
-    setUfiles([]);
-    setSyncMessage("Files Uploaded SuccessFully");
-
-
-  }
 
   const handleSyncCheck = async () => {
     setSyncError('')
     setSyncMessage('')
-    const result = await SubjectService.createSubAndUnitSync(dfiles);
+    setDprogress(null)
+    setUprogress(null)
 
     if (!accessToken) {
       setSyncError('Connect Google Drive before checking sync status.')
@@ -288,19 +275,149 @@ const StorageSync = () => {
       const { UFiles, DFiles } = await syncFilesWithGoogleDrive(accessToken)
       setUfiles(UFiles)
       setDfiles(DFiles)
-
-
-
-
-
-      setSyncMessage(`Sync check complete: ${UFiles.length} local file${UFiles.length === 1 ? '' : 's'} to upload and ${DFiles.length} Drive file${DFiles.length === 1 ? '' : 's'} to download.`)
+      setActiveFilter('All')
+      setVisibleActivity([
+        ...UFiles.map((file) => ({
+          id: `upload-${file.lid}`,
+          action: 'Upload',
+          name: file.name,
+          subject: file.subject || 'Unknown subject',
+          detail: formatBytes(file.size || file.file?.size),
+          kind: getFileKind(file),
+        })),
+        ...DFiles.map((file) => ({
+          id: `download-${file.id}`,
+          action: 'Download',
+          name: file.name,
+          subject: file.appProperties?.subject || 'Unknown subject',
+          detail: formatBytes(file.size),
+          kind: getFileKind(file),
+        })),
+      ])
+      setSyncMessage(`Sync check complete: ${UFiles.length} local file${UFiles.length === 1 ? '' : 's'} ready to upload and ${DFiles.length} Drive file${DFiles.length === 1 ? '' : 's'} ready to download.`)
     } catch (error) {
       console.error('Unable to check Google Drive sync status:', error)
-      setSyncError('Could not check Google Drive sync status. Please try again.')
+      setSyncError(error instanceof Error ? error.message : 'Could not check Google Drive sync status.')
     } finally {
       setSyncing(false)
     }
   }
+
+  const handleDownloadSync = async () => {
+    if (!accessToken) {
+      setSyncError('Connect Google Drive before downloading files.')
+      return
+    }
+
+    setSyncing(true)
+    setSyncError('')
+    setSyncMessage(`Downloading ${dfiles.length} Drive file${dfiles.length === 1 ? '' : 's'}…`)
+    try {
+      await Promise.all(dfiles.map(async (file) => {
+        const appProperties = file.appProperties || {}
+        if (!appProperties.lid || !appProperties.semester || !appProperties.subject || !appProperties.unit) {
+          throw new Error(`Drive file "${file.name}" is missing StudyVault location metadata and cannot be downloaded.`)
+        }
+
+        const downloadedFile = await GoogleDriveService.downloadFile(
+          file.id,
+          accessToken,
+          (progress) => setDprogress((current) => ({ ...current, [appProperties.lid]: progress })),
+          file.mimeType,
+        )
+        await localDB.upload(
+          downloadedFile,
+          file.name,
+          appProperties.semester,
+          appProperties.subject,
+          appProperties.unit,
+          file.mimeType,
+          file.size || downloadedFile.size,
+          appProperties.lid,
+        )
+      }))
+      setDfiles([])
+      setDprogress(null)
+      setVisibleActivity((current) => current.filter((item) => item.action !== 'Download'))
+      await refreshVaultStats()
+      setSyncMessage('Drive files were downloaded to this device.')
+    } catch (error) {
+      console.error('Unable to download Drive files:', error)
+      setSyncError(error instanceof Error ? error.message : 'Unable to download Drive files.')
+    } finally {
+      setSyncing(false)
+    }
+  }
+
+  const handleUploadSync = async () => {
+    if (!accessToken || !folderId) {
+      setSyncError('Connect Google Drive and make sure the StudyVault folder is available before uploading.')
+      return
+    }
+
+    setSyncing(true)
+    setSyncError('')
+    setSyncMessage(`Uploading ${ufiles.length} local file${ufiles.length === 1 ? '' : 's'}…`)
+    try {
+      await Promise.all(ufiles.map((file) => GoogleDriveService.uploadFile(
+        folderId,
+        file.file,
+        accessToken,
+        file.semester,
+        file.subject,
+        file.unit,
+        file.lid,
+        (percent) => setUprogress((current) => ({ ...current, [file.lid]: percent })),
+      )))
+      setUfiles([])
+      setUprogress(null)
+      setVisibleActivity((current) => current.filter((item) => item.action !== 'Upload'))
+      setSyncMessage('Local files were uploaded to Google Drive.')
+    } catch (error) {
+      console.error('Unable to upload local files:', error)
+      setSyncError(error instanceof Error ? error.message : 'Unable to upload local files.')
+    } finally {
+      setSyncing(false)
+    }
+  }
+
+  const handleClearLocalCache = async () => {
+    setCacheMessage('')
+    setCacheError('')
+    if (!vaultFiles.length) {
+      setCacheMessage('There are no locally stored files to clear.')
+      return
+    }
+    if (!window.confirm(`Remove ${vaultFiles.length} locally stored file${vaultFiles.length === 1 ? '' : 's'} from this browser? Subjects and Google Drive files will not be deleted.`)) {
+      return
+    }
+
+    setCacheBusy(true)
+    try {
+      const deletedCount = await localDB.clearAllFiles()
+      setUfiles([])
+      setDfiles([])
+      setVisibleActivity([])
+      await refreshVaultStats()
+      setCacheMessage(`${deletedCount} local file${deletedCount === 1 ? '' : 's'} removed. Subjects and Drive files were left unchanged.`)
+    } catch (error) {
+      console.error('Unable to clear locally stored files:', error)
+      setCacheError(error instanceof Error ? error.message : 'Unable to clear locally stored files.')
+    } finally {
+      setCacheBusy(false)
+    }
+  }
+  const localFileBytes = vaultFiles.reduce(
+    (total, file) => total + (Number(file.size) || file.file?.size || 0),
+    0,
+  )
+  const storagePercent = storageEstimate?.quota
+    ? Math.min(100, (storageEstimate.usage / storageEstimate.quota) * 100)
+    : 0
+  const compositionPercent = (category) => vaultFiles.length
+    ? (fileComposition[category] / vaultFiles.length) * 100
+    : 0
+
   return (
     <div className="app-shell">
       <SideBar />
@@ -322,12 +439,12 @@ const StorageSync = () => {
               </div>
               <div className="flex flex-col items-start gap-3 sm:flex-row sm:items-center lg:items-end">
                 <div className="text-sm text-slate-500">
-                  <span className="inline-flex items-center gap-2 font-medium text-teal-700">
+                  <span className={`inline-flex items-center gap-2 font-medium ${accessToken ? 'text-teal-700' : 'text-amber-700'}`}>
                     <span className="relative flex h-2.5 w-2.5">
-                      <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-teal-400 opacity-60" />
-                      <span className="relative inline-flex h-2.5 w-2.5 rounded-full bg-teal-500" />
+                      <span className={`absolute inline-flex h-full w-full animate-ping rounded-full opacity-60 ${accessToken ? 'bg-teal-400' : 'bg-amber-400'}`} />
+                      <span className={`relative inline-flex h-2.5 w-2.5 rounded-full ${accessToken ? 'bg-teal-500' : 'bg-amber-500'}`} />
                     </span>
-                    Drive status is ready to check
+                    {accessToken ? 'Google Drive connected' : 'Connect Google Drive to sync'}
                   </span>
                 </div>
                 <button
@@ -337,7 +454,7 @@ const StorageSync = () => {
                   className="inline-flex min-h-11 items-center justify-center gap-2 rounded-xl bg-indigo-600 px-4 py-2.5 text-sm font-semibold text-white shadow-sm transition hover:bg-indigo-700 disabled:cursor-wait disabled:opacity-60"
                 >
                   <Icon name="sync" className={syncing ? 'animate-spin' : ''} />
-                  {syncing ? 'Checking…' : 'Check Sync Status'}
+                  {syncing ? 'Working…' : 'Check Sync Status'}
                 </button>
               </div>
             </header>
@@ -351,7 +468,7 @@ const StorageSync = () => {
                   }`}
               >
                 <Icon name={syncError ? 'alert' : 'check'} size={18} className="mt-0.5 shrink-0" />
-                <span>{syncError || syncMessage}</span>
+                <span className="min-w-0 break-words">{syncError || syncMessage}</span>
                 <button
                   type="button"
                   aria-label="Dismiss message"
@@ -365,90 +482,108 @@ const StorageSync = () => {
                 </button>
               </div>
             )}
-            {
-              syncMessage && (
-                <div >
+            {vaultError && (
+              <p role="alert" className="rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700">
+                Local storage statistics could not be loaded: {vaultError}
+              </p>
+            )}
 
-                  
-                  {ufiles.length > 0 && <div className={`flex flex-col items-start border-rose-200 bg-teal-50 text-teal-700 gap-2 rounded-xl border px-4 py-3 text-sm`}> <ul className='w-full list-decimal'>{ufiles.map((f) => (
-
-                    <div key={ufiles.lid} className="flex justify-between w-full">
-                      <li className='flex-1'>
-                        {f.name}
-
-                      </li> 
-                     
-                        {Uprogress!=null && (
-                          <span className='mr-3'>
-                        {Uprogress[f.lid]}%</span>
-                        )} <span>
-                        Size:{(f.size / 1024 / 1024).toFixed(2)} MB
-                      </span>
-                    </div>
-
-                  ))}
-                  </ul>
-                    <div className="
-                flex justify-between w-full">
-                      <span className='text-xl text-gray-400 bg-rose
-                  3
-                  -500 w-full p-1 rounded-tl-lg rounded-bl-lg '>
-                      Upload Local files to Cloud
-                      </span>
-                      <button 
-                      disabled={ufiles.length==0}
-                      className='inline-flex min-h-11
-                       items-center justify-center gap-2 rounded-xl bg-indigo-600
-                        px-4 py-2.5 text-sm font-semibold text-white shadow-sm transition hover:bg-indigo-700 disabled:cursor-wait disabled:opacity-60' onClick={handle_upload_sync}>
+            {syncMessage && (ufiles.length > 0 || dfiles.length > 0) && (
+              <div className="grid gap-4 lg:grid-cols-2">
+                {ufiles.length > 0 && (
+                  <section className="min-w-0 rounded-xl border border-teal-200 bg-teal-50 p-4">
+                    <div className="flex items-center justify-between gap-3">
+                      <h2 className="font-semibold text-teal-900">Local files ready to upload</h2>
+                      <button
+                        type="button"
+                        disabled={syncing}
+                        onClick={handleUploadSync}
+                        className="rounded-lg bg-indigo-600 px-3 py-2 text-sm font-semibold text-white hover:bg-indigo-700 disabled:opacity-60"
+                      >
                         Upload
                       </button>
-
                     </div>
-                  </div>}
-
-
-                  {dfiles.length > 0 && <div className={`flex flex-col items-start border-rose-200 bg-rose-50 text-rose-700 gap-2 rounded-xl border px-4 py-3 text-sm`}> <ul className='w-full list-decimal'>{dfiles.map((f) => (
-
-                   <div key={f.lid} className="flex justify-between w-full">
-                      <li className='flex-1'>
-                        {f.name}
-
-                      </li> 
-                     
-                        {Dprogress!=null && (
-                          <span className='mr-3'>
-                        {Dprogress[f.appProperties.lid]}%</span>
-                        )} <span>
-                        Size:{(f.size / 1024 / 1024).toFixed(2)} MB
-                      </span>
-                    </div>
-
-                  ))}
-                  </ul>
-                    <div className="
-                flex justify-between w-full">
-                      <span className='text-xl text-gray-400 bg-rose
-                  3
-                  -500 w-full p-1 rounded-tl-lg rounded-bl-lg '>
-                        Download Cloud Files to Local DB
-                      </span>
-                      <button 
-                      disabled={
-                        dfiles.length==0
-                      }className='inline-flex min-h-11 items-center justify-center gap-2 rounded-xl bg-indigo-600 px-4 py-2.5 text-sm font-semibold text-white shadow-sm transition hover:bg-indigo-700 disabled:cursor-wait  disabled:opacity-60' onClick={handle_download_Sync}>
-                       Download
+                    <ul className="mt-3 min-w-0 w-full divide-y divide-teal-200">
+                      {ufiles.map((file) => {
+                        const progress = Uprogress?.[file.lid]
+                        return (
+                          <li key={file.lid} className="min-w-0 py-2 text-sm text-teal-900">
+                            <div className="flex min-w-0 items-center justify-between gap-3">
+                              <span className="min-w-0 flex-1 truncate" title={file.name}>{file.name}</span>
+                              <span className="shrink-0 text-xs">
+                                {progress != null ? `${progress}%` : formatBytes(file.size || file.file?.size)}
+                              </span>
+                            </div>
+                            {progress != null && (
+                              <div
+                                role="progressbar"
+                                aria-label={`Upload progress for ${file.name}`}
+                                aria-valuemin={0}
+                                aria-valuemax={100}
+                                aria-valuenow={progress}
+                                className="mt-2 h-1.5 overflow-hidden rounded-full bg-teal-100"
+                              >
+                                <div className="h-full rounded-full bg-teal-600 transition-all" style={{ width: `${progress}%` }} />
+                              </div>
+                            )}
+                          </li>
+                        )
+                      })}
+                    </ul>
+                  </section>
+                )}
+                {dfiles.length > 0 && (
+                  <section className="min-w-0 rounded-xl border border-indigo-200 bg-indigo-50 p-4">
+                    <div className="flex items-center justify-between gap-3">
+                      <h2 className="font-semibold text-indigo-900">Drive files ready to download</h2>
+                      <button
+                        type="button"
+                        disabled={syncing}
+                        onClick={handleDownloadSync}
+                        className="rounded-lg bg-indigo-600 px-3 py-2 text-sm font-semibold text-white hover:bg-indigo-700 disabled:opacity-60"
+                      >
+                        Download
                       </button>
-
                     </div>
-                  </div>}
-
-
-
-
-                </div>
-              )
-
-            }
+                    <ul className="mt-3 min-w-0 w-full divide-y divide-indigo-200">
+                      {dfiles.map((file) => {
+                        const lid = file.appProperties?.lid
+                        const progress = lid ? Dprogress?.[lid] : null
+                        return (
+                          <li key={file.id} className="min-w-0 py-2 text-sm text-indigo-900">
+                            <div className="flex min-w-0 items-center justify-between gap-3">
+                              <span className="min-w-0 flex-1 truncate" title={file.name}>{file.name}</span>
+                              <span className="shrink-0 text-xs">
+                                {progress
+                                  ? progress.progress == null
+                                    ? `${formatBytes(progress.received)} received`
+                                    : `${progress.progress}% · ${formatBytes(progress.received)}`
+                                  : formatBytes(file.size)}
+                              </span>
+                            </div>
+                            {progress && (
+                              <div
+                                role="progressbar"
+                                aria-label={`Download progress for ${file.name}`}
+                                aria-valuemin={0}
+                                aria-valuemax={100}
+                                aria-valuenow={progress.progress ?? undefined}
+                                className="mt-2 h-1.5 overflow-hidden rounded-full bg-indigo-100"
+                              >
+                                <div
+                                  className={`h-full rounded-full bg-indigo-600 transition-all ${progress.progress == null ? 'animate-pulse' : ''}`}
+                                  style={{ width: progress.progress == null ? '35%' : `${progress.progress}%` }}
+                                />
+                              </div>
+                            )}
+                          </li>
+                        )
+                      })}
+                    </ul>
+                  </section>
+                )}
+              </div>
+            )}
 
             <section className="grid grid-cols-1 gap-4 md:grid-cols-3">
               <StatCard
@@ -457,38 +592,62 @@ const StorageSync = () => {
                 title="Local Device Cache"
                 badge={<span className="rounded-full bg-slate-100 px-2.5 py-1 text-xs font-medium text-slate-600">IndexedDB</span>}
                 footer={
-                  <div className="flex gap-2 border-t border-slate-100 pt-4">
-                    <button type="button" className="flex-1 rounded-lg bg-slate-100 px-3 py-2 text-xs font-semibold text-slate-700 transition hover:bg-slate-200">Manage offline files</button>
-                    <button type="button" className="rounded-lg px-3 py-2 text-xs font-semibold text-slate-500 transition hover:bg-rose-50 hover:text-rose-700">Clear cache</button>
+                  <div className="border-t border-slate-100 pt-4">
+                    <div className="flex gap-2">
+                      <button
+                        type="button"
+                        onClick={() => navigate('/subjects')}
+                        className="flex-1 rounded-lg bg-slate-100 px-3 py-2 text-xs font-semibold text-slate-700 transition hover:bg-slate-200"
+                      >
+                        Manage files
+                      </button>
+                      <button
+                        type="button"
+                        onClick={handleClearLocalCache}
+                        disabled={cacheBusy || !vaultFiles.length}
+                        className="rounded-lg px-3 py-2 text-xs font-semibold text-rose-700 transition hover:bg-rose-50 disabled:cursor-not-allowed disabled:opacity-50"
+                      >
+                        {cacheBusy ? 'Clearing…' : 'Clear local files'}
+                      </button>
+                    </div>
+                    {(cacheMessage || cacheError) && (
+                      <p role={cacheError ? 'alert' : 'status'} className={`mt-3 text-xs ${cacheError ? 'text-rose-700' : 'text-teal-700'}`}>
+                        {cacheError || cacheMessage}
+                      </p>
+                    )}
                   </div>
                 }
               >
                 <div className="flex items-baseline justify-between">
-                  <div><span className="text-2xl font-bold text-slate-900">{usedStorage} MB</span><span className="ml-1.5 text-sm text-slate-500">/{storageAllocated}GB</span></div>
-                  <span className="text-sm font-semibold text-teal-700">{((usedStorage / (storageAllocated * 1024)) * 100).toFixed(2)}% used</span>
+                  <span className="text-2xl font-bold text-slate-900">{formatBytes(localFileBytes)}</span>
+                  <span className="text-sm font-semibold text-slate-500">{vaultFiles.length} files</span>
                 </div>
                 <div className="h-2 overflow-hidden rounded-full bg-slate-100">
-                  <div className="h-full rounded-full bg-teal-500" style={{ width: `${((usedStorage / (storageAllocated * 1024)) * 100).toFixed(2)}%` }} />
+                  <div className="h-full rounded-full bg-teal-500" style={{ width: `${storagePercent}%` }} />
                 </div>
-                <p className="text-xs leading-5 text-slate-500">Cached files and offline annotations available on this device.</p>
+                <p className="text-xs leading-5 text-slate-500">
+                  {storageEstimate
+                    ? `${formatBytes(storageEstimate.usage)} of ${formatBytes(storageEstimate.quota)} browser storage used.`
+                    : 'Browser storage estimates are not available in this browser.'}
+                </p>
               </StatCard>
 
               <StatCard
                 icon="cloud"
                 iconClass="bg-teal-50 text-teal-700"
                 title="Google Drive Sync"
-                badge={<span className="inline-flex items-center gap-1.5 rounded-full bg-teal-50 px-2.5 py-1 text-xs font-semibold text-teal-700"><span className="h-1.5 w-1.5 rounded-full bg-teal-500" />{user ? 'Connected' : 'Not connected'}</span>}
+                badge={<span className={`inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-xs font-semibold ${accessToken ? 'bg-teal-50 text-teal-700' : 'bg-amber-50 text-amber-700'}`}><span className={`h-1.5 w-1.5 rounded-full ${accessToken ? 'bg-teal-500' : 'bg-amber-500'}`} />{accessToken ? 'Connected' : 'Not connected'}</span>}
                 footer={
                   <div className="flex items-center justify-between border-t border-slate-100 pt-4 text-xs text-slate-500">
-                    <span>Automatic sync check</span>
-                    <span className="font-medium text-teal-700">Available</span>
+                    <span>Sync is started manually</span>
+                    <span className={`font-medium ${accessToken ? 'text-teal-700' : 'text-amber-700'}`}>{accessToken ? 'Ready to check' : 'Sign in required'}</span>
                   </div>
                 }
               >
                 <div className="rounded-xl bg-slate-50 p-3">
                   <div className="flex items-center justify-between gap-3 text-xs">
                     <span className="text-slate-500">Connected account</span>
-                    <span className="max-w-[180px] truncate font-medium text-slate-800">{user?.email || 'Connect an account to sync'}</span>
+                    <span className="max-w-[180px] truncate font-medium text-slate-800">{accessToken ? user?.email || 'Google account connected' : 'Connect an account to sync'}</span>
                   </div>
                   <div className="mt-2 flex items-center justify-between gap-3 text-xs">
                     <span className="text-slate-500">Remote storage</span>
@@ -513,22 +672,22 @@ const StorageSync = () => {
                 }
               >
                 <div className="flex items-baseline justify-between">
-                  <span className="text-2xl font-bold text-slate-900">142 files</span>
-                  <span className="text-xs text-slate-500">Across 4 subjects</span>
+                  <span className="text-2xl font-bold text-slate-900">{vaultFiles.length} files</span>
+                  <span className="text-xs text-slate-500">Across {vaultSubjects.length} subjects</span>
                 </div>
                 <div className="flex h-2.5 overflow-hidden rounded-full bg-slate-100">
-                  <span className="w-[44%] bg-rose-500" />
-                  <span className="w-[26%] bg-amber-500" />
-                  <span className="w-[20%] bg-emerald-500" />
-                  <span className="w-[10%] bg-blue-500" />
+                  <span className="bg-rose-500" style={{ width: `${compositionPercent('pdf')}%` }} />
+                  <span className="bg-amber-500" style={{ width: `${compositionPercent('presentations')}%` }} />
+                  <span className="bg-emerald-500" style={{ width: `${compositionPercent('images')}%` }} />
+                  <span className="bg-blue-500" style={{ width: `${compositionPercent('other')}%` }} />
                 </div>
-                <p className="text-xs leading-5 text-slate-500">A quick overview of the files in your study vault.</p>
+                <p className="text-xs leading-5 text-slate-500">Distribution of files currently saved in this browser.</p>
               </StatCard>
             </section>
 
             <div className="grid grid-cols-1 items-start gap-6 lg:grid-cols-12">
               <div className="flex flex-col gap-6 lg:col-span-7">
-                <section className="rounded-2xl border border-slate-100 bg-white p-5 shadow-sm sm:p-6">
+                <section className="min-w-0 rounded-2xl border border-slate-100 bg-white p-5 shadow-sm sm:p-6">
                   <div className="flex items-center justify-between gap-3">
                     <div>
                       <h2 className="font-semibold text-slate-900">Storage destination</h2>
@@ -567,74 +726,60 @@ const StorageSync = () => {
                 <section className="rounded-2xl border border-slate-100 bg-white p-5 shadow-sm sm:p-6">
                   <div className="flex items-center justify-between gap-3">
                     <div>
-                      <h2 className="font-semibold text-slate-900">Sync &amp; network rules</h2>
-                      <p className="mt-1 text-sm text-slate-500">Choose how sync behaves on this device.</p>
+                      <h2 className="font-semibold text-slate-900">Home dashboard preferences</h2>
+                      <p className="mt-1 text-sm text-slate-500">These saved preferences immediately change your Home page.</p>
                     </div>
-                    <span className="hidden text-xs font-medium text-teal-700 sm:inline">Preferences</span>
+                    <Icon name="activity" className="text-indigo-600" />
                   </div>
-                  <div className="mt-4 divide-y divide-slate-100">
-                    {[
-                      { id: 'autoSync', title: 'Auto-sync on file change', summary: 'Check for changes when files are modified.' },
-                      { id: 'wifiOnly', title: 'Sync over Wi-Fi only', summary: 'Prefer Wi-Fi for larger file transfers.' },
-                      { id: 'offlineFiles', title: 'Keep downloaded files offline', summary: 'Make downloaded files available without a connection.' },
-                      { id: 'backgroundOcr', title: 'Background text extraction', summary: 'Allow text extraction to run in the background.' },
-                    ].map((preference) => (
-                      <label key={preference.id} className="flex cursor-pointer items-center justify-between gap-4 py-4">
-                        <span>
-                          <span className="block text-sm font-semibold text-slate-800">{preference.title}</span>
-                          <span className="mt-1 block text-xs leading-5 text-slate-500">{preference.summary}</span>
-                        </span>
-                        <input
-                          type="checkbox"
-                          checked={preferences[preference.id]}
-                          onChange={() => togglePreference(preference.id)}
-                          className="h-5 w-9 shrink-0 cursor-pointer appearance-none rounded-full bg-slate-300 transition before:block before:h-4 before:w-4 before:translate-x-0.5 before:translate-y-0.5 before:rounded-full before:bg-white before:shadow before:transition checked:bg-teal-500 checked:before:translate-x-[18px]"
-                        />
-                      </label>
-                    ))}
-                  </div>
-                </section>
-
-                <section className="rounded-2xl border border-slate-100 bg-white p-5 shadow-sm sm:p-6">
-                  <div className="flex items-center justify-between gap-3">
-                    <div>
-                      <h2 className="font-semibold text-slate-900">Sync conflict resolution</h2>
-                      <p className="mt-1 text-sm text-slate-500">Choose what to do when a file has changed in two places.</p>
-                    </div>
-                    <Icon name="merge" className="text-indigo-600" />
-                  </div>
-                  <label className="sr-only" htmlFor="conflict-strategy">Conflict resolution strategy</label>
+                  {[
+                    { id: 'showSubjects', title: 'Show subject overview', summary: 'Display your saved subjects on Home.' },
+                    { id: 'showRecentFiles', title: 'Show recently added files', summary: 'Display local files with a shortcut to their viewer.' },
+                  ].map((preference) => (
+                    <label key={preference.id} className="flex cursor-pointer items-center justify-between gap-4 border-b border-slate-100 py-4">
+                      <span>
+                        <span className="block text-sm font-semibold text-slate-800">{preference.title}</span>
+                        <span className="mt-1 block text-xs leading-5 text-slate-500">{preference.summary}</span>
+                      </span>
+                      <input
+                        type="checkbox"
+                        checked={dashboardPreferences[preference.id]}
+                        onChange={(event) => updateDashboardPreference(preference.id, event.target.checked)}
+                        className="h-5 w-9 shrink-0 cursor-pointer appearance-none rounded-full bg-slate-300 transition before:block before:h-4 before:w-4 before:translate-x-0.5 before:translate-y-0.5 before:rounded-full before:bg-white before:shadow before:transition checked:bg-teal-500 checked:before:translate-x-[18px]"
+                      />
+                    </label>
+                  ))}
+                  <label htmlFor="recent-file-limit" className="mt-4 block text-sm font-semibold text-slate-800">
+                    Recent files shown
+                  </label>
                   <select
-                    id="conflict-strategy"
-                    value={conflictStrategy}
-                    onChange={(event) => setConflictStrategy(event.target.value)}
-                    className="mt-5 h-11 w-full rounded-xl border border-slate-200 bg-slate-50 px-3 text-sm text-slate-700 outline-none transition focus:border-indigo-400 focus:ring-2 focus:ring-indigo-100"
+                    id="recent-file-limit"
+                    value={dashboardPreferences.recentFileLimit}
+                    onChange={(event) => updateDashboardPreference('recentFileLimit', Number(event.target.value))}
+                    className="mt-2 h-11 w-full rounded-xl border border-slate-200 bg-slate-50 px-3 text-sm text-slate-700 outline-none transition focus:border-indigo-400 focus:ring-2 focus:ring-indigo-100"
                   >
-                    <option>Ask every time (Show interactive diff)</option>
-                    <option>Keep newer version automatically (Timestamp precedence)</option>
-                    <option>Keep device version (Overwrite cloud)</option>
-                    <option>Keep Drive version (Overwrite local cache)</option>
+                    {[3, 5, 8, 10].map((count) => <option key={count} value={count}>{count} files</option>)}
                   </select>
-                  <div className="mt-4 flex items-start gap-3 rounded-xl bg-amber-50 p-4 text-sm text-amber-900">
-                    <Icon name="alert" className="mt-0.5 shrink-0 text-amber-600" />
-                    <p className="text-xs leading-5">When versions conflict, review the files before choosing which copy to keep.</p>
-                  </div>
+                  {(dashboardPreferencesMessage || dashboardPreferencesError) && (
+                    <p role={dashboardPreferencesError ? 'alert' : 'status'} className={`mt-3 text-xs ${dashboardPreferencesError ? 'text-rose-700' : 'text-teal-700'}`}>
+                      {dashboardPreferencesError || dashboardPreferencesMessage}
+                    </p>
+                  )}
                 </section>
               </div>
 
               <div className="flex flex-col gap-6 lg:col-span-5">
-                <section className="rounded-2xl border border-slate-100 bg-white p-5 shadow-sm sm:p-6">
+                <section className="min-w-0 rounded-2xl border border-slate-100 bg-white p-5 shadow-sm sm:p-6">
                   <div className="flex items-center justify-between gap-3">
                     <div className="flex items-center gap-2">
                       <Icon name="activity" className="text-indigo-600" />
-                      <h2 className="font-semibold text-slate-900">Recent sync activity</h2>
+                      <h2 className="font-semibold text-slate-900">Current sync candidates</h2>
                     </div>
                     <button
                       type="button"
                       onClick={() => setVisibleActivity([])}
                       className="text-xs font-semibold text-indigo-600 hover:text-indigo-800"
                     >
-                      Clear log
+                      Clear candidates
                     </button>
                   </div>
                   <div className="mt-4 flex gap-2 overflow-x-auto pb-1">
@@ -646,26 +791,27 @@ const StorageSync = () => {
                         className={`shrink-0 rounded-full px-3 py-1.5 text-xs font-semibold transition ${activeFilter === filter ? 'bg-indigo-600 text-white' : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
                           }`}
                       >
-                        {filter} {filter === 'All' ? `(${visibleActivity.length})` : `(${visibleActivity.filter((item) => item.status === filter).length})`}
+                        {filter} {filter === 'All' ? `(${visibleActivity.length})` : `(${visibleActivity.filter((item) => item.action === filter).length})`}
                       </button>
                     ))}
                   </div>
                   <div className="mt-3 divide-y divide-slate-100">
                     {displayedActivity.length ? displayedActivity.map((item) => (
-                      <div key={item.id} className="flex items-center justify-between gap-3 py-3">
+                      <div key={item.id} className="flex min-w-0 items-center justify-between gap-3 py-3">
                         <div className="flex min-w-0 items-center gap-3">
-                          <span className={`flex h-8 w-9 shrink-0 items-center justify-center rounded-lg text-[10px] font-bold ${item.kind === 'PDF' ? 'bg-rose-50 text-rose-700' : item.kind === 'PPT' ? 'bg-amber-50 text-amber-700' : 'bg-emerald-50 text-emerald-700'
+                          <span className={`flex h-8 w-9 shrink-0 items-center justify-center rounded-lg text-[10px] font-bold ${item.action === 'Upload' ? 'bg-teal-50 text-teal-700' : 'bg-indigo-50 text-indigo-700'
                             }`}>{item.kind}</span>
                           <div className="min-w-0">
-                            <p className="truncate text-xs font-semibold text-slate-800">{item.name}</p>
+                            <p className="truncate text-xs font-semibold text-slate-800" title={item.name}>{item.name}</p>
                             <p className="mt-1 truncate text-[11px] text-slate-500">{item.subject} · {item.detail}</p>
                           </div>
                         </div>
-                        <span className={`shrink-0 text-[11px] font-medium ${item.status === 'Errors' ? 'text-rose-600' : item.status === 'Pending' ? 'text-amber-600' : 'text-teal-700'
-                          }`}>{item.status === 'Errors' ? 'Needs attention' : item.time}</span>
+                        <span className={`shrink-0 text-[11px] font-medium ${item.action === 'Upload' ? 'text-teal-700' : 'text-indigo-700'}`}>
+                          {item.action} pending
+                        </span>
                       </div>
                     )) : (
-                      <p className="py-8 text-center text-sm text-slate-500">No activity to show.</p>
+                      <p className="py-8 text-center text-sm text-slate-500">Run a sync check to see files that can be transferred.</p>
                     )}
                   </div>
                 </section>
@@ -711,7 +857,7 @@ const StorageSync = () => {
                   </div>
                   {pendingBackup && (
                     <div className="mt-4 rounded-xl border border-amber-200 bg-amber-50 p-4">
-                      <p className="text-sm font-semibold text-amber-900">Restore {pendingBackup.name}?</p>
+                      <p className="break-all text-sm font-semibold text-amber-900">Restore {pendingBackup.name}?</p>
                       <p className="mt-1 text-xs leading-5 text-amber-800">Choose whether to replace this device’s vault or add backup records without overwriting existing records.</p>
                       <div className="mt-3 flex flex-wrap gap-2">
                         <button type="button" onClick={() => handleImportBackup('replace')} disabled={backupBusy} className="rounded-lg bg-rose-600 px-3 py-2 text-xs font-semibold text-white hover:bg-rose-700 disabled:opacity-60">Replace vault</button>
@@ -720,9 +866,6 @@ const StorageSync = () => {
                       </div>
                     </div>
                   )}
-                  <button type="button" className="mt-4 flex w-full items-center justify-center gap-2 rounded-lg px-3 py-2 text-xs font-semibold text-slate-500 transition hover:bg-rose-50 hover:text-rose-700">
-                    <Icon name="close" size={15} /> Delete local cache
-                  </button>
                 </section>
               </div>
             </div>

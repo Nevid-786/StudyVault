@@ -11,7 +11,8 @@ pdfjs.GlobalWorkerOptions.workerSrc = new URL(
   import.meta.url,
 ).toString();
 
-export const PDFViewer = ({ pdfFile }) => {
+export const PDFViewer = ({ pdfFile, file, initialPage = 1, onProgressChange }) => {
+  const documentFile = pdfFile || file
   const [numPages, setNumPages] = useState(null);
   const [pageNumber, setPageNumber] = useState(1);
   const [scale, setScale] = useState(1.0);
@@ -20,6 +21,10 @@ export const PDFViewer = ({ pdfFile }) => {
   const [scrollDirection, setScrollDirection] = useState('vertical');
   const scrollContainerRef = useRef(null);
   const pageElements = useRef(new Map());
+
+  useEffect(() => {
+    if (numPages) onProgressChange?.({ pageNumber, pageCount: numPages });
+  }, [numPages, onProgressChange, pageNumber]);
 
   useEffect(() => {
     function handleKeyDown(event) {
@@ -45,7 +50,7 @@ export const PDFViewer = ({ pdfFile }) => {
 
   function onDocumentLoadSuccess({ numPages }) {
     setNumPages(numPages);
-    setPageNumber(1);
+    setPageNumber(Math.min(Math.max(1, initialPage), numPages));
   }
 
   function goToPreviousPage() {
@@ -204,7 +209,7 @@ export const PDFViewer = ({ pdfFile }) => {
         className="flex-1 overflow-auto px-4 py-6"
       >
         <Document
-          file={pdfFile}
+          file={documentFile}
           onLoadSuccess={onDocumentLoadSuccess}
           loading={<p className="text-center text-gray-300">Loading PDF...</p>}
           error={<p className="text-center text-red-300">Failed to load PDF.</p>}

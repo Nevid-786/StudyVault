@@ -1,292 +1,475 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { useDispatch, useSelector } from 'react-redux'
+import { useNavigate } from 'react-router-dom'
 import { loadmanifest } from '../stores/fileSlice'
 import SideBar from '../components/SideBar'
 import TopBar from '../components/TopBar'
 import subjectService from '../services/subjectService'
+import localDB from '../config/indexdb'
+import {
+  DEFAULT_DASHBOARD_PREFERENCES,
+  readDashboardPreferences,
+} from '../config/dashboardPreferences'
 
-/* ─── Mock Data ─────────────────────────────────────────── */
-const exams = [
-  { id: 1, subject: 'Applied Thermodynamics', code: 'PHY-204', venue: 'Midterm Hall B • Paper 1', date: 'May 24', daysLeft: 12, color: '#FEF3C7', iconColor: '#D97706', icon: '⚗️' },
-  { id: 2, subject: 'Computer Architecture',  code: 'CS-310',  venue: 'Lab Building 3 • Terminal Exam', date: 'May 27', daysLeft: 15, color: '#EEF2FF', iconColor: '#4F46E5', icon: '💻' },
-]
+const getViewerPath = (file) => {
+  if (!file.lid) return null
+  const type = (file.type || '').toLowerCase()
+  const extension = file.name?.split('.').pop()?.toLowerCase()
+  const lid = encodeURIComponent(file.lid)
 
-const subjects = [
-  { id: 1, name: 'Physics',              files: 48, extra: '3 decks',        progress: 74, color: '#4F46E5', iconBg: '#EEF2FF', icon: '⚗️' },
-  { id: 2, name: 'Chemistry',            files: 32, extra: 'Organic notes',  progress: 58, color: '#14B8A6', iconBg: '#CCFBF1', icon: '🧪' },
-  { id: 3, name: 'Computer Architecture',files: 26, extra: 'RISC-V labs',    progress: 82, color: '#6366F1', iconBg: '#EEF2FF', icon: '🖥️' },
-  { id: 4, name: 'Calculus',             files: 41, extra: 'Multivariable',  progress: 45, color: '#EF4444', iconBg: '#FEE2E2', icon: '∑'  },
-]
-
-const recentFiles = [
-  { id: 1, title: 'Stokes Theorem …',   time: '25 mins ago',     from: 'From: Physics Group',   type: 'PDF',   color: '#EF4444', bg: '#FEE2E2' },
-  { id: 2, title: 'CPU Pipelining & …', time: 'Today, 9:15 AM',  from: 'From: Prof. Verma',     type: 'PPT',   color: '#F97316', bg: '#FFEDD5' },
-  { id: 3, title: 'Electrophilic Sub…', time: 'Yesterday, 4:20 PM', from: 'From: WhatsApp Web', type: 'Image', color: '#10B981', bg: '#D1FAE5' },
-  { id: 4, title: 'NIST Thermodynam…',  time: 'Yesterday, 11:00 AM', from: 'From: Chemistry TA',type: 'Web',   color: '#3B82F6', bg: '#DBEAFE' },
-  { id: 5, title: 'Eigenvalues & Di…',  time: 'May 10',          from: 'From: Study Circle',    type: 'PDF',   color: '#EF4444', bg: '#FEE2E2' },
-]
-
-/* ─── Sub-components ─────────────────────────────────────── */
-
-function ExamCard({ exam }) {
-  return (
-    <div className="exam-card">
-      <div className="exam-icon" style={{ background: exam.color, color: exam.iconColor }}>
-        {exam.icon}
-      </div>
-      <div className="exam-info">
-        <div className="exam-subject">
-          {exam.subject} <span className="exam-code">{exam.code}</span>
-        </div>
-        <div className="exam-venue">{exam.venue}</div>
-      </div>
-      <div className="exam-date-block">
-        <div className="exam-date">{exam.date}</div>
-        <div className="exam-days-pill">{exam.daysLeft} days left</div>
-      </div>
-    </div>
-  )
+  if (type === 'application/pdf' || extension === 'pdf') return `/pdf/${lid}`
+  if (type.startsWith('image/') || ['png', 'jpg', 'jpeg', 'gif', 'webp', 'bmp', 'svg'].includes(extension)) {
+    return `/image/${lid}`
+  }
+  if (type.includes('wordprocessingml') || ['docx', 'doc'].includes(extension)) return `/docx/${lid}`
+  if (
+    type.includes('presentationml')
+    || type === 'application/vnd.ms-powerpoint'
+    || ['pptx', 'ppt'].includes(extension)
+  ) {
+    return `/pptx/${lid}`
+  }
+  return null
 }
 
-function CurrentlyReading() {
-  return (
-    <div className="reading-card">
-      <div className="reading-badge-row">
-        <span className="subject-pill">Physics</span>
-        <span className="reading-time">🕐 Last active 18m ago</span>
-        <span className="reading-progress-pill">62% Completed</span>
-      </div>
-
-      <div className="reading-body">
-        <div className="reading-thumbnail">
-          <div className="reading-thumbnail-inner">
-            <div className="pdf-badge">PDF</div>
-            <div className="reading-thumb-content">
-              <div className="reading-thumb-lines">
-                {[...Array(8)].map((_, i) => (
-                  <div key={i} className="thumb-line" style={{ width: `${60 + (i * 7) % 30}%`, opacity: 0.4 + i * 0.05 }} />
-                ))}
-              </div>
-            </div>
-            <div className="reading-thumb-caption">
-              <div className="thumb-caption-title">Carnot Efficiency Eq.</div>
-              <div className="thumb-caption-sub">Section 3.4</div>
-            </div>
-          </div>
-        </div>
-
-        <div className="reading-details">
-          <h2 className="reading-title">Thermodynamics Ch.3 – Heat Engines &amp; Entropy</h2>
-          <p className="reading-desc">Covers second law derivations, Clausius theorem, reversible cycles, and closed engine efficiency…</p>
-
-          <div className="reading-progress-row">
-            <span>Page 42 of 68</span>
-            <span>26 pages remaining</span>
-          </div>
-          <div className="reading-bar-track">
-            <div className="reading-bar-fill" style={{ width: '62%' }} />
-          </div>
-
-          <div className="reading-actions">
-            <button className="btn-primary">▶ Resume Reading</button>
-            <button className="btn-ghost">🔖 Notes</button>
-            <button className="btn-ghost btn-icon">•••</button>
-          </div>
-        </div>
-      </div>
-    </div>
-  )
+const formatBytes = (value) => {
+  const bytes = Number(value) || 0
+  if (bytes < 1024) return `${bytes} B`
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`
+  if (bytes < 1024 * 1024 * 1024) return `${(bytes / (1024 * 1024)).toFixed(1)} MB`
+  return `${(bytes / (1024 * 1024 * 1024)).toFixed(2)} GB`
 }
 
-function StorageSync() {
-  return (
-    <div className="storage-card">
-      <div className="storage-header">
-        <div className="storage-title-row">
-          <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#4F46E5" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><ellipse cx="12" cy="5" rx="9" ry="3"/><path d="M21 12c0 1.66-4 3-9 3s-9-1.34-9-3"/><path d="M3 5v14c0 1.66 4 3 9 3s9-1.34 9-3V5"/></svg>
-          <span className="storage-title">Storage &amp; Sync</span>
-        </div>
-        <span className="storage-check">✓</span>
-      </div>
-      <div className="storage-sub">Multi-tier redundancy</div>
+const FOCUS_DURATION_SECONDS = 25 * 60
 
-      <div className="storage-item">
-        <div className="storage-item-row">
-          <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#64748b" strokeWidth="2"><rect x="2" y="3" width="20" height="14" rx="2"/><line x1="8" y1="21" x2="16" y2="21"/><line x1="12" y1="17" x2="12" y2="21"/></svg>
-          <span className="storage-device">This device</span>
-          <span className="storage-amount">340 MB / 5 GB</span>
-        </div>
-        <div className="storage-track">
-          <div className="storage-fill storage-fill-green" style={{ width: '6.8%' }} />
-        </div>
-        <div className="storage-note">4.66 GB free locally</div>
-      </div>
-
-      <div className="storage-item">
-        <div className="storage-item-row">
-          <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#64748b" strokeWidth="2"><polyline points="23 4 23 10 17 10"/><polyline points="1 20 1 14 7 14"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/></svg>
-          <span className="storage-device">Google Drive</span>
-          <span className="storage-amount">1.2 GB synced</span>
-        </div>
-        <div className="storage-track">
-          <div className="storage-fill storage-fill-primary" style={{ width: '48%' }} />
-        </div>
-        <div className="storage-note-row">
-          <span className="storage-live-pill">Auto-backup live</span>
-          <span className="storage-note">Synced 2 min ago</span>
-        </div>
-      </div>
-
-      <button className="storage-manage-btn">Manage cloud quotas →</button>
-    </div>
-  )
+const getFileType = (file) => {
+  const extension = file.name?.split('.').pop()
+  return extension ? extension.toUpperCase() : 'FILE'
 }
 
-function SubjectCard({ subject }) {
-  const circumference = 2 * Math.PI * 18
-  const dash = (subject.progress / 100) * circumference
-
-  return (
-    <div className="subject-card">
-      <div className="subject-card-top">
-        <div className="subject-icon-wrap" style={{ background: subject.iconBg }}>
-          <span style={{ fontSize: '20px' }}>{subject.icon}</span>
-        </div>
-        <svg width="40" height="40" viewBox="0 0 44 44" className="subject-ring">
-          <circle cx="22" cy="22" r="18" fill="none" stroke="#e2e8f0" strokeWidth="3" />
-          <circle
-            cx="22" cy="22" r="18" fill="none"
-            stroke={subject.color} strokeWidth="3"
-            strokeDasharray={`${dash} ${circumference}`}
-            strokeLinecap="round"
-            transform="rotate(-90 22 22)"
-          />
-          <text x="22" y="26" textAnchor="middle" fontSize="9" fill={subject.color} fontWeight="700">{subject.progress}%</text>
-        </svg>
-      </div>
-      <div className="subject-name">{subject.name}</div>
-      <div className="subject-meta">{subject.files} files • {subject.extra}</div>
-      <div className="subject-bar-track">
-        <div className="subject-bar-fill" style={{ width: `${subject.progress}%`, background: subject.color }} />
-      </div>
-    </div>
-  )
-}
-
-function RecentFileCard({ file }) {
-  return (
-    <div className="recent-card">
-      <div className="recent-thumb" style={{ background: file.bg }}>
-        <span className="recent-file-badge" style={{ background: file.color }}>{file.type}</span>
-        <div className="recent-thumb-pattern">
-          {[...Array(6)].map((_, i) => (
-            <div key={i} className="recent-thumb-line" />
-          ))}
-        </div>
-      </div>
-      <div className="recent-info">
-        <div className="recent-title">{file.title}</div>
-        <div className="recent-time">{file.time}</div>
-        <div className="recent-from">{file.from}</div>
-      </div>
-    </div>
-  )
-}
-
-/* ─── Main Home Page ────────────────────────────────────── */
 const Home = () => {
-  const dispatch = useDispatch();
-  const user= useSelector((state)=> state.auth.user);
-  const [isLogged, setIsLogged] = useState(false);
-
+  const dispatch = useDispatch()
+  const navigate = useNavigate()
+  const user = useSelector((state) => state.auth.user)
+  const [subjects, setSubjects] = useState([])
+  const [files, setFiles] = useState([])
+  const [lastOpened, setLastOpened] = useState(null)
+  const [loading, setLoading] = useState(true)
+  const [error, setError] = useState('')
+  const [historyError, setHistoryError] = useState('')
+  const [search, setSearch] = useState('')
+  const [reloadKey, setReloadKey] = useState(0)
+  const [focusSeconds, setFocusSeconds] = useState(FOCUS_DURATION_SECONDS)
+  const [focusRunning, setFocusRunning] = useState(false)
+  const [preferenceState] = useState(() => {
+    try {
+      return { preferences: readDashboardPreferences(), error: '' }
+    } catch {
+      return {
+        preferences: DEFAULT_DASHBOARD_PREFERENCES,
+        error: 'Dashboard preferences could not be read. You can update them in Storage & Sync.',
+      }
+    }
+  })
+  const dashboardPreferences = preferenceState.preferences
 
   useEffect(() => {
-    dispatch(loadmanifest())
-      console.log("Home component",user);
-      if(user){
-        setIsLogged(true);
-        console.log("user found :Home");
+    let active = true
+
+    const loadDashboard = async () => {
+      setLoading(true)
+      setError('')
+      try {
+        dispatch(loadmanifest())
+        const [subjectRows, fileRows] = await Promise.all([
+          subjectService.getAllSubjects(),
+          localDB.getallfile(),
+        ])
+        if (!Array.isArray(subjectRows) || !Array.isArray(fileRows)) {
+          throw new TypeError('The local vault returned invalid dashboard data')
+        }
+        if (active) {
+          setSubjects(subjectRows)
+          setFiles(fileRows)
+        }
+        try {
+          const lastOpenedFile = await localDB.getLastOpenedFile()
+          if (active) {
+            setLastOpened(lastOpenedFile)
+            setHistoryError('')
+          }
+        } catch (historyLoadError) {
+          console.error('Unable to load reading history:', historyLoadError)
+          if (active) setHistoryError('Reading history is unavailable; your saved files are still accessible.')
+        }
+      } catch (loadError) {
+        console.error('Unable to load the StudyVault dashboard:', loadError)
+        if (active) {
+          setError(loadError instanceof Error ? loadError.message : 'Unable to load your study data.')
+        }
+      } finally {
+        if (active) setLoading(false)
       }
-subjectService.getAllSubjects().then((subjects) => {
-  console.log("Subjects fetched:", subjects);
-}).catch((error) => {
-  console.error("Error fetching subjects:", error);
-});
-  }, [dispatch,user])
+    }
+
+    loadDashboard()
+    const refreshOnFocus = () => setReloadKey((current) => current + 1)
+    window.addEventListener('focus', refreshOnFocus)
+    return () => {
+      active = false
+      window.removeEventListener('focus', refreshOnFocus)
+    }
+  }, [dispatch, reloadKey])
+
+  // A one-second timeout keeps the focus countdown paused cleanly when the user leaves Home.
+  useEffect(() => {
+    if (!focusRunning || focusSeconds === 0) return undefined
+    const timer = window.setTimeout(() => {
+      setFocusSeconds((remaining) => Math.max(0, remaining - 1))
+    }, 1000)
+    return () => window.clearTimeout(timer)
+  }, [focusRunning, focusSeconds])
+
+  const query = search.trim().toLowerCase()
+  const matchingSubjects = useMemo(
+    () => subjects.filter((subject) => (subject.name || '').toLowerCase().includes(query)),
+    [query, subjects],
+  )
+  const recentFiles = useMemo(
+    () => files
+      .filter((file) => !query || (file.name || '').toLowerCase().includes(query))
+      .sort((left, right) => (right.id || 0) - (left.id || 0))
+      .slice(0, dashboardPreferences.recentFileLimit),
+    [dashboardPreferences.recentFileLimit, files, query],
+  )
+
+  const totalBytes = files.reduce((total, file) => total + (Number(file.size) || file.file?.size || 0), 0)
+  const semesterCount = new Set(subjects.map((subject) => subject.semester).filter(Boolean)).size
+  const firstName = user?.name?.trim().split(/\s+/)[0] || user?.email?.split('@')[0] || 'there'
+  const progressPage = Number(lastOpened?.progress?.pageNumber)
+  const progressPageCount = Number(lastOpened?.progress?.pageCount)
+  const progressPercent = progressPageCount > 0
+    ? Math.min(100, Math.round((progressPage / progressPageCount) * 100))
+    : null
+  const focusTime = `${String(Math.floor(focusSeconds / 60)).padStart(2, '0')}:${String(focusSeconds % 60).padStart(2, '0')}`
+
+  const openFile = (file) => {
+    const viewerPath = getViewerPath(file)
+    if (viewerPath) {
+      window.open(viewerPath, '_blank', 'noopener,noreferrer')
+      return
+    }
+
+    if (file.file instanceof Blob) {
+      const objectUrl = URL.createObjectURL(file.file)
+      window.open(objectUrl, '_blank', 'noopener,noreferrer')
+      window.setTimeout(() => URL.revokeObjectURL(objectUrl), 60_000)
+    }
+  }
 
   return (
     <div className="app-shell">
       <SideBar />
-
       <div className="main-content">
-        <TopBar  islogged={isLogged} user={user}/>
+        <TopBar islogged={Boolean(user)} user={user} />
 
-        <div className="page-scroll">
-          {/* Page header */}
-          <div className="page-header">
-            <div>
-              <div className="page-breadcrumb">● SEMESTER 4 • ACADEMIC WORKSPACE</div>
-              <h1 className="page-greeting">Good morning, Aman</h1>
-              <p className="page-subtitle">
-                You have <span className="highlight-pill">2 exams coming up</span> in 12 days. Focus on Thermodynamics today.
+        <main className="page-scroll !gap-6 !px-4 !py-6 sm:!px-6 lg:!px-8">
+          <div className="mx-auto flex w-full max-w-7xl flex-col gap-7">
+            <header className="flex flex-col justify-between gap-5 lg:flex-row lg:items-end">
+              <div>
+                <div className="mb-2 text-xs font-semibold uppercase tracking-wider text-indigo-600">
+                  Your academic workspace
+                </div>
+                <h1 className="text-3xl font-bold tracking-tight text-slate-900 sm:text-4xl">
+                  Welcome back, {firstName}
+                </h1>
+                <p className="mt-2 text-sm leading-6 text-slate-600 sm:text-base">
+                  Your local vault has {subjects.length} {subjects.length === 1 ? 'subject' : 'subjects'} and{' '}
+                  {files.length} saved {files.length === 1 ? 'file' : 'files'}.
+                </p>
+              </div>
+              <label className="flex min-h-11 w-full items-center gap-3 rounded-xl border border-slate-200 bg-white px-4 shadow-sm lg:max-w-sm">
+                <svg aria-hidden="true" width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="shrink-0 text-slate-400">
+                  <circle cx="11" cy="11" r="8" />
+                  <path d="m21 21-4.35-4.35" />
+                </svg>
+                <input
+                  type="search"
+                  aria-label="Search subjects and saved files"
+                  placeholder="Search subjects and files"
+                  value={search}
+                  onChange={(event) => setSearch(event.target.value)}
+                  className="min-w-0 flex-1 bg-transparent text-sm outline-none placeholder:text-slate-400"
+                />
+              </label>
+            </header>
+
+            {preferenceState.error && (
+              <p role="status" className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">
+                {preferenceState.error}
               </p>
-            </div>
-            <div className="page-header-search">
-              <svg xmlns="http://www.w3.org/2000/svg" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#94a3b8" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
-              <span>Search notes, highlights, subjects…</span>
-              <div className="header-search-right">
-                <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#94a3b8" strokeWidth="2"><path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/><line x1="12" y1="19" x2="12" y2="23"/><line x1="8" y1="23" x2="16" y2="23"/></svg>
-                <kbd>⌘K</kbd>
+            )}
+
+            {error && (
+              <div role="alert" className="rounded-xl border border-rose-200 bg-rose-50 p-5 text-rose-800">
+                <p className="font-semibold">Your dashboard could not load local vault data.</p>
+                <p className="mt-1 text-sm">{error}</p>
+                <button
+                  type="button"
+                  onClick={() => setReloadKey((current) => current + 1)}
+                  className="mt-3 rounded-lg bg-rose-700 px-3 py-2 text-sm font-semibold text-white hover:bg-rose-800"
+                >
+                  Try again
+                </button>
               </div>
-            </div>
+            )}
+
+            <section aria-label="Vault summary" className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
+              {[
+                { label: 'Subjects', value: subjects.length, detail: `${semesterCount} ${semesterCount === 1 ? 'semester' : 'semesters'}`, icon: '📚' },
+                { label: 'Study units', value: subjects.reduce((total, subject) => total + (subject.units?.length || 0), 0), detail: 'Across your subjects', icon: '🗂️' },
+                { label: 'Saved files', value: files.length, detail: 'Available in this browser', icon: '📄' },
+                { label: 'File data', value: formatBytes(totalBytes), detail: 'Stored in your local vault', icon: '💾' },
+              ].map((stat) => (
+                <div key={stat.label} className="rounded-2xl border border-slate-100 bg-white p-5 shadow-sm">
+                  <div className="flex items-center justify-between">
+                    <span className="text-sm font-medium text-slate-500">{stat.label}</span>
+                    <span aria-hidden="true" className="text-xl">{stat.icon}</span>
+                  </div>
+                  <div className="mt-3 text-2xl font-bold text-slate-900">{loading ? '…' : stat.value}</div>
+                  <div className="mt-1 text-xs text-slate-500">{stat.detail}</div>
+                </div>
+              ))}
+            </section>
+
+            <section className="rounded-2xl bg-gradient-to-br from-indigo-700 to-violet-700 p-6 text-white shadow-sm sm:p-8">
+              <div className="flex flex-col justify-between gap-5 sm:flex-row sm:items-center">
+                <div>
+                  <p className="text-sm font-medium text-indigo-100">Pick up where you left off</p>
+                  <h2 className="mt-1 text-xl font-bold sm:text-2xl">Your subjects and study materials</h2>
+                  <p className="mt-2 max-w-xl text-sm leading-6 text-indigo-100">
+                    Browse your saved units, add course materials, or ask questions using your indexed study files.
+                  </p>
+                </div>
+                <div className="flex flex-wrap gap-2">
+                  <button
+                    type="button"
+                    onClick={() => navigate('/subjects')}
+                    className="rounded-xl bg-white px-4 py-2.5 text-sm font-semibold text-indigo-700 transition hover:bg-indigo-50"
+                  >
+                    Browse subjects
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => navigate('/revision')}
+                    className="rounded-xl border border-white/40 px-4 py-2.5 text-sm font-semibold text-white transition hover:bg-white/10"
+                  >
+                    Open study assistant
+                  </button>
+                </div>
+              </div>
+            </section>
+
+            <section aria-label="Resume reading" className="rounded-2xl border border-slate-100 bg-white p-5 shadow-sm sm:p-6">
+              <div className="flex flex-col justify-between gap-4 sm:flex-row sm:items-center">
+                <div className="min-w-0 flex-1">
+                  <p className="text-sm font-semibold text-indigo-600">Resume reading</p>
+                  {lastOpened ? (
+                    <>
+                      <h2 className="mt-1 truncate text-lg font-semibold text-slate-900" title={lastOpened.file.name}>
+                        {lastOpened.file.name}
+                      </h2>
+                      <p className="mt-1 text-sm text-slate-500">
+                        {progressPageCount > 0
+                          ? `Page ${progressPage} of ${progressPageCount} · ${progressPercent}% complete`
+                          : 'Last opened in its document viewer'}
+                      </p>
+                      {progressPercent !== null && (
+                        <div
+                          role="progressbar"
+                          aria-label="Reading progress"
+                          aria-valuemin={0}
+                          aria-valuemax={100}
+                          aria-valuenow={progressPercent}
+                          className="mt-3 h-2 max-w-md overflow-hidden rounded-full bg-slate-100"
+                        >
+                          <div className="h-full rounded-full bg-indigo-600 transition-all" style={{ width: `${progressPercent}%` }} />
+                        </div>
+                      )}
+                    </>
+                  ) : (
+                    <p className="mt-1 text-sm text-slate-500">
+                      {historyError || (loading ? 'Checking your reading history…' : 'Open a saved document to start tracking your reading progress.')}
+                    </p>
+                  )}
+                  {historyError && lastOpened && <p role="status" className="mt-2 text-xs text-amber-700">{historyError}</p>}
+                </div>
+                <button
+                  type="button"
+                  disabled={!lastOpened}
+                  onClick={() => lastOpened && openFile(lastOpened.file)}
+                  className="shrink-0 rounded-xl bg-indigo-600 px-4 py-2.5 text-sm font-semibold text-white transition hover:bg-indigo-700 disabled:cursor-not-allowed disabled:opacity-40"
+                >
+                  Resume file ↗
+                </button>
+              </div>
+            </section>
+
+            <section aria-label="Focus timer" className="flex flex-col justify-between gap-5 rounded-2xl border border-indigo-100 bg-indigo-50/60 p-5 sm:flex-row sm:items-center sm:p-6">
+              <div>
+                <p className="text-sm font-semibold text-indigo-700">Focus session</p>
+                <h2 className="mt-1 text-lg font-semibold text-slate-900">Study for 25 minutes, then take a break.</h2>
+                <p aria-live="polite" className="mt-1 text-sm text-slate-600">
+                  {focusSeconds === 0 ? 'Focus session complete. Take a short break.' : focusRunning ? 'You’re in a focus session.' : 'Start a session whenever you’re ready.'}
+                </p>
+              </div>
+              <div className="flex shrink-0 items-center gap-3">
+                <span aria-label={`${focusTime} remaining`} className="font-mono text-2xl font-bold tabular-nums text-indigo-900">
+                  {focusTime}
+                </span>
+                <button
+                  type="button"
+                  onClick={() => {
+                    if (focusSeconds === 0) {
+                      setFocusSeconds(FOCUS_DURATION_SECONDS)
+                      setFocusRunning(true)
+                    } else {
+                      setFocusRunning((running) => !running)
+                    }
+                  }}
+                  className="rounded-xl bg-indigo-600 px-4 py-2.5 text-sm font-semibold text-white hover:bg-indigo-700"
+                >
+                  {focusSeconds === 0 ? 'Start again' : focusRunning ? 'Pause' : focusSeconds === FOCUS_DURATION_SECONDS ? 'Start' : 'Resume'}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setFocusRunning(false)
+                    setFocusSeconds(FOCUS_DURATION_SECONDS)
+                  }}
+                  className="rounded-xl border border-indigo-200 bg-white px-4 py-2.5 text-sm font-semibold text-indigo-700 hover:bg-indigo-100"
+                >
+                  Reset
+                </button>
+              </div>
+            </section>
+
+            {dashboardPreferences.showSubjects && (
+              <section className="rounded-2xl border border-slate-100 bg-white p-5 shadow-sm sm:p-6">
+                <div className="flex items-center justify-between gap-4">
+                  <div>
+                    <h2 className="text-lg font-semibold text-slate-900">Your subjects</h2>
+                    <p className="mt-1 text-sm text-slate-500">Open a subject to view its units and materials.</p>
+                  </div>
+                  <button type="button" onClick={() => navigate('/subjects')} className="text-sm font-semibold text-indigo-600 hover:text-indigo-800">
+                    All subjects →
+                  </button>
+                </div>
+
+                {loading ? (
+                  <p className="py-10 text-center text-sm text-slate-500">Loading subjects…</p>
+                ) : matchingSubjects.length ? (
+                  <div className="mt-5 grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
+                    {matchingSubjects.slice(0, 6).map((subject) => {
+                      const subjectFiles = files.filter((file) => file.subject === subject.name)
+                      return (
+                        <button
+                          key={subject.id || `${subject.semester}-${subject.name}`}
+                          type="button"
+                          onClick={() => navigate(`/subjects/${encodeURIComponent(subject.name)}`)}
+                          className="rounded-xl border border-slate-200 p-4 text-left transition hover:border-indigo-300 hover:bg-indigo-50/40 focus:outline-none focus:ring-2 focus:ring-indigo-300"
+                        >
+                          <span className="flex items-start justify-between gap-3">
+                            <span className="font-semibold text-slate-900">{subject.name}</span>
+                            <span className="rounded-full bg-indigo-50 px-2.5 py-1 text-xs font-medium text-indigo-700">
+                              {subject.semester || 'Semester not set'}
+                            </span>
+                          </span>
+                          <span className="mt-3 block text-sm text-slate-500">
+                            {subject.units?.length || 0} units · {subjectFiles.length} {subjectFiles.length === 1 ? 'file' : 'files'}
+                          </span>
+                        </button>
+                      )
+                    })}
+                  </div>
+                ) : (
+                  <div className="mt-5 rounded-xl border border-dashed border-slate-300 px-5 py-10 text-center">
+                    <p className="font-semibold text-slate-800">{query ? 'No matching subjects' : 'No subjects yet'}</p>
+                    <p className="mt-1 text-sm text-slate-500">
+                      {query ? 'Try another search, or browse all subjects.' : 'Create a subject to organize units and upload your study files.'}
+                    </p>
+                    <button type="button" onClick={() => navigate('/subjects')} className="mt-4 rounded-lg bg-indigo-600 px-4 py-2 text-sm font-semibold text-white hover:bg-indigo-700">
+                      Go to subjects
+                    </button>
+                  </div>
+                )}
+              </section>
+            )}
+
+            {dashboardPreferences.showRecentFiles && (
+              <section className="rounded-2xl border border-slate-100 bg-white p-5 shadow-sm sm:p-6">
+                <div className="flex items-center justify-between gap-4">
+                  <div>
+                    <h2 className="text-lg font-semibold text-slate-900">Recently added files</h2>
+                    <p className="mt-1 text-sm text-slate-500">Open a file in its local viewer.</p>
+                  </div>
+                  <button type="button" onClick={() => navigate('/subjects')} className="text-sm font-semibold text-indigo-600 hover:text-indigo-800">
+                    Find files →
+                  </button>
+                </div>
+
+                {loading ? (
+                  <p className="py-10 text-center text-sm text-slate-500">Loading saved files…</p>
+                ) : recentFiles.length ? (
+                  <div className="mt-4 divide-y divide-slate-100">
+                    {recentFiles.map((file) => (
+                      <button
+                        key={file.id || file.lid}
+                        type="button"
+                        onClick={() => openFile(file)}
+                        className="flex w-full items-center gap-3 py-3 text-left transition hover:bg-slate-50"
+                      >
+                        <span className="flex h-10 w-11 shrink-0 items-center justify-center rounded-lg bg-indigo-50 text-[10px] font-bold text-indigo-700">
+                          {getFileType(file)}
+                        </span>
+                        <span className="min-w-0 flex-1">
+                          <span className="block truncate text-sm font-semibold text-slate-800">{file.name}</span>
+                          <span className="mt-1 block truncate text-xs text-slate-500">
+                            {[file.subject, file.unit && `Unit ${file.unit}`, file.semester].filter(Boolean).join(' · ') || 'Saved in your local vault'}
+                          </span>
+                        </span>
+                        <span className="shrink-0 text-xs text-slate-500">{formatBytes(file.size || file.file?.size)}</span>
+                        <span aria-hidden="true" className="text-slate-400">↗</span>
+                      </button>
+                    ))}
+                  </div>
+                ) : (
+                  <div className="mt-5 rounded-xl border border-dashed border-slate-300 px-5 py-10 text-center">
+                    <p className="font-semibold text-slate-800">{query ? 'No matching files' : 'No files saved yet'}</p>
+                    <p className="mt-1 text-sm text-slate-500">
+                      {query ? 'Try a different search term.' : 'Open a subject and unit to add your first study material.'}
+                    </p>
+                    {!query && (
+                      <button type="button" onClick={() => navigate('/subjects')} className="mt-4 rounded-lg bg-indigo-600 px-4 py-2 text-sm font-semibold text-white hover:bg-indigo-700">
+                        Browse subjects
+                      </button>
+                    )}
+                  </div>
+                )}
+              </section>
+            )}
+
+            <footer className="flex flex-wrap gap-3 border-t border-slate-200 pt-5">
+              <button type="button" onClick={() => navigate('/storage')} className="text-sm font-semibold text-slate-600 hover:text-indigo-700">
+                Storage &amp; settings
+              </button>
+              <button type="button" onClick={() => navigate('/subjects')} className="text-sm font-semibold text-slate-600 hover:text-indigo-700">
+                Choose a subject to add material
+              </button>
+            </footer>
           </div>
-
-          {/* Exam cards */}
-          <div className="exam-row">
-            {exams.map((exam) => <ExamCard key={exam.id} exam={exam} />)}
-          </div>
-
-          {/* Reading + Storage */}
-          <div className="mid-section">
-            <CurrentlyReading />
-            <StorageSync />
-          </div>
-
-          {/* Enrolled Subjects */}
-          <section className="section">
-            <div className="section-header">
-              <div className="section-title-row">
-                <h2 className="section-title">Enrolled Subjects</h2>
-                <span className="count-pill">4 Active</span>
-              </div>
-              <button className="view-all-btn">View all folders ›</button>
-            </div>
-            <div className="subjects-grid">
-              {subjects.map((s) => <SubjectCard key={s.id} subject={s} />)}
-            </div>
-          </section>
-
-          {/* Recently Added */}
-          <section className="section">
-            <div className="section-header">
-              <div className="section-title-row">
-                <h2 className="section-title">Recently Added</h2>
-                <span className="count-pill">Latest 5</span>
-              </div>
-              <div className="section-arrows">
-                <button className="arrow-btn">‹</button>
-                <button className="arrow-btn">›</button>
-              </div>
-            </div>
-            <div className="recent-grid">
-              {recentFiles.map((f) => <RecentFileCard key={f.id} file={f} />)}
-            </div>
-          </section>
-        </div>
+        </main>
       </div>
-
-      {/* FAB */}
-      <button className="fab">+</button>
     </div>
   )
 }

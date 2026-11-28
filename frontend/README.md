@@ -36,6 +36,8 @@ Indexing supports PDF, DOCX, PPTX, TXT, Markdown, CSV, and images via OCR. Legac
 
 ## Local file previews
 
+The Home dashboard reads subjects and saved files from this browser's IndexedDB. Storage & Sync settings can control the Home sections and recent-file count, choose the default save destination, compare Google Drive files, and export or restore a vault backup.
+
 Open a saved file from a unit to route it to the matching local viewer:
 
 - `/pdf/:lid` uses `react-pdf` to render PDF pages.
@@ -44,3 +46,7 @@ Open a saved file from a unit to route it to the matching local viewer:
 - `/image/:lid` uses the browser's image renderer with zoom and rotation controls; no image-rendering dependency is required.
 
 Each route loads its file by `lid` from IndexedDB through `subjectService.getFileByLid`. `UnitPage` selects the route from the file MIME type, falling back to the filename extension when needed, and opens the viewer in a new tab. Legacy `.doc` files must be converted to `.docx`; legacy `.ppt` files are supported by the local PowerPoint 97–2003 renderer.
+
+## Production API routing
+
+The Vercel frontend proxies `/api/*` requests to the Render backend. Production requests use the relative `/api` path so the browser receives the authentication cookie from the Vercel origin instead of treating Render as a third-party site. Keep `FRONTEND_URL` on Render set to the exact Vercel origin, and keep `JWT_SECRET` stable across deployments. The authentication cookie and JWT both expire after one hour.

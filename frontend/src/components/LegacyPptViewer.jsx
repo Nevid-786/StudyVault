@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 
-const LegacyPptViewer = ({ file, fileName }) => {
+const LegacyPptViewer = ({ file, fileName, initialPage = 1, onProgressChange }) => {
   const containerRef = useRef(null)
   const viewerRef = useRef(null)
   const lastWheelTimeRef = useRef(0)
@@ -10,6 +10,10 @@ const LegacyPptViewer = ({ file, fileName }) => {
   const pageCount = isCurrentResult ? renderResult.pageCount : 0
   const loading = !isCurrentResult
   const error = isCurrentResult ? renderResult.error : null
+
+  useEffect(() => {
+    if (pageCount) onProgressChange?.({ pageNumber, pageCount })
+  }, [onProgressChange, pageCount, pageNumber])
 
   useEffect(() => {
     let active = true
@@ -30,6 +34,11 @@ const LegacyPptViewer = ({ file, fileName }) => {
         const presentation = await viewer.load(file)
 
         if (active) {
+          const targetSlide = Math.min(
+            Math.max(0, initialPage - 1),
+            presentation.slides.length - 1,
+          )
+          while (viewer.slideIndex < targetSlide) viewer.next()
           setPageNumber(viewer.slideIndex + 1)
           setRenderResult({
             file,
@@ -56,7 +65,7 @@ const LegacyPptViewer = ({ file, fileName }) => {
       viewerRef.current?.destroy()
       viewerRef.current = null
     }
-  }, [file])
+  }, [file, initialPage])
 
   const handleWheel = (event) => {
     if (!pageCount || Math.abs(event.deltaY) < 20) return

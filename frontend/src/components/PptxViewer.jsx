@@ -2,14 +2,20 @@ import { useEffect, useRef, useState } from 'react'
 import { PPTXViewer as PptxRenderer } from 'pptx-viewer'
 import LegacyPptViewer from './LegacyPptViewer'
 
-const PptxFormatViewer = ({ file, fileName, fileType }) => {
+const PptxFormatViewer = ({ file, fileName, fileType, initialPage, onProgressChange }) => {
   const containerRef = useRef(null)
   const viewerRef = useRef(null)
   const lastWheelTimeRef = useRef(0)
   const [renderResult, setRenderResult] = useState(null)
   const isCurrentResult = renderResult?.file === file
+  const pageCount = isCurrentResult ? renderResult.pageCount : 0
+  const [pageNumber, setPageNumber] = useState(initialPage)
   const loading = !isCurrentResult
   const error = isCurrentResult ? renderResult.error : null
+
+  useEffect(() => {
+    if (pageCount) onProgressChange?.({ pageNumber, pageCount })
+  }, [onProgressChange, pageCount, pageNumber])
 
   useEffect(() => {
     let active = true
@@ -26,6 +32,10 @@ const PptxFormatViewer = ({ file, fileName, fileType }) => {
         viewer = new PptxRenderer(containerRef.current, {
           showControls: true,
           keyboardNavigation: true,
+          initialSlide: Math.max(0, initialPage - 1),
+          onSlideChange: (index) => {
+            if (active) setPageNumber(index + 1)
+          },
           onError: (renderError) => {
             viewerError = renderError
             if (active) setRenderResult({ file, error: renderError.message })
@@ -33,7 +43,12 @@ const PptxFormatViewer = ({ file, fileName, fileType }) => {
         })
         viewerRef.current = viewer
         await viewer.load(await file.arrayBuffer())
-        if (active) setRenderResult({ file, error: viewerError?.message || null })
+        if (active) {
+          const slideCount = viewer.getSlideCount()
+          const currentPage = viewer.getCurrentSlide() + 1
+          setPageNumber(currentPage)
+          setRenderResult({ file, pageCount: slideCount, error: viewerError?.message || null })
+        }
       } catch (renderError) {
         if (active) {
           setRenderResult({
@@ -52,7 +67,7 @@ const PptxFormatViewer = ({ file, fileName, fileType }) => {
       viewer?.destroy()
       viewerRef.current = null
     }
-  }, [file, fileName, fileType])
+  }, [file, fileName, fileType, initialPage])
 
   const handleWheel = (event) => {
     const viewer = viewerRef.current
@@ -88,14 +103,14 @@ const PptxFormatViewer = ({ file, fileName, fileType }) => {
   )
 }
 
-const PptxViewer = ({ file, fileName, fileType }) => {
+const PptxViewer = ({ file, fileName, fileType, initialPage = 1, onProgressChange }) => {
   const extension = fileName?.split('.').pop()?.toLowerCase()
   const isLegacyPpt = extension === 'ppt'
     || (extension !== 'pptx' && fileType?.toLowerCase() === 'application/vnd.ms-powerpoint')
 
   return isLegacyPpt
-    ? <LegacyPptViewer file={file} fileName={fileName} />
-    : <PptxFormatViewer file={file} fileName={fileName} fileType={fileType} />
+    ? <LegacyPptViewer file={file} fileName={fileName} initialPage={initialPage} onProgressChange={onProgressChange} />
+    : <PptxFormatViewer file={file} fileName={fileName} fileType={fileType} initialPage={initialPage} onProgressChange={onProgressChange} />
 }
 
 export default PptxViewer

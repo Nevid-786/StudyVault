@@ -5,6 +5,7 @@ import { useSelector } from 'react-redux'
 import SideBar from '../components/SideBar'
 import TopBar from '../components/TopBar'
 import localDB from '../config/indexdb'
+import GoogleDriveService from '../services/googleDrive'
 import { motion } from 'motion/react'
 
 const formatFileSize = (size) => {
@@ -49,12 +50,16 @@ const UnitPage = () => {
   const unit = searchParams.get('unit')
 
   const user = useSelector((state) => state.auth.user)
+  const accessToken = useSelector((state) => state.auth.googleAccessToken)
 
   const [files, setFiles] = useState([])
   const [previewUrls, setPreviewUrls] = useState({})
   const [search, setSearch] = useState('')
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState(null)
+  const [deletingLid, setDeletingLid] = useState(null)
+  const [deleteMessage, setDeleteMessage] = useState('')
+  const [deleteError, setDeleteError] = useState('')
 
   // Load files from IndexedDB
   const loadFiles = async () => {
@@ -132,6 +137,39 @@ const UnitPage = () => {
     window.open(url, '_blank', 'noopener,noreferrer')
   }
 
+  const handleDeleteFile = async (file) => {
+    const canIdentifyDriveCopy = Boolean(file.lid || file.driveFileId)
+    const confirmation = accessToken && canIdentifyDriveCopy
+      ? `Delete "${file.name}" from this device and any matching Google Drive copies?`
+      : `Delete "${file.name}" from this device?${accessToken ? ' This file has no Drive identifier, so any cloud copy cannot be identified.' : ' Any Google Drive copy will remain.'}`
+    if (!window.confirm(confirmation)) return
+
+    setDeletingLid(file.lid)
+    setDeleteMessage('')
+    setDeleteError('')
+    try {
+      const driveCopiesDeleted = accessToken && canIdentifyDriveCopy
+        ? await GoogleDriveService.deleteFileByLid(accessToken, file.lid, file.driveFileId)
+        : 0
+      const localDeleted = await localDB.deleteFile(file.lid, file.id)
+      if (!localDeleted) throw new Error('The local file was not found, so it could not be deleted.')
+
+      setFiles((current) => current.filter((savedFile) => savedFile.lid !== file.lid))
+      setDeleteMessage(accessToken && canIdentifyDriveCopy
+        ? driveCopiesDeleted > 0
+          ? `Deleted the local file and ${driveCopiesDeleted} Google Drive ${driveCopiesDeleted === 1 ? 'copy' : 'copies'}.`
+          : 'Deleted the local file. No matching Google Drive copy was found.'
+        : accessToken
+          ? 'Deleted the local file. No Drive identifier was available to locate its cloud copy.'
+          : 'Deleted the local file. Sign in to Google Drive if you also want to remove its cloud copy.')
+    } catch (deleteError) {
+      console.error('Unable to delete the selected file:', deleteError)
+      setDeleteError(deleteError instanceof Error ? deleteError.message : 'Unable to delete the selected file.')
+    } finally {
+      setDeletingLid(null)
+    }
+  }
+
   return (
     <div className="app-shell">
       <SideBar />
@@ -180,6 +218,9 @@ const UnitPage = () => {
               />
             </div>
           </div>
+
+          {deleteMessage && <p role="status" className="mb-4 rounded-lg border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-800">{deleteMessage}</p>}
+          {deleteError && <p role="alert" className="mb-4 rounded-lg border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-800">{deleteError}</p>}
 
           {loading ? (
             <div className="empty-state">
@@ -295,16 +336,11 @@ const UnitPage = () => {
                         <motion.button
                         whileClick={{ scale: 0.95 }}
                         className="subj-delete-btn bg-red-400 text-white p-1 rounded-lg"
-                  
-                        
-                         onClick={async () => {
-
-                          const result =await localDB.deleteFile(file.lid)
-                          console.log('File deleted:', result)
-                          loadFiles()
-                        }}>
-                          Delete file
-
+                        type="button"
+                        disabled={deletingLid === file.lid}
+                        onClick={() => handleDeleteFile(file)}
+                        >
+                          {deletingLid === file.lid ? 'Deleting…' : 'Delete file'}
                         </motion.button>
                         <button onClick={() => {
                           const viewerPath = getViewerPath(file)

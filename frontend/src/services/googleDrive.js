@@ -55,6 +55,30 @@ export default class GoogleDriveService {
   return items;
 }
 
+static async deleteFileByLid(accessToken, lid, driveFileId = null) {
+  if (!accessToken) throw new TypeError('Sign in to Google Drive before deleting Drive files')
+  if (!lid && !driveFileId) throw new TypeError('A local or Drive file ID is required to find its Drive copy')
+
+  // Uploaded files keep their local ID in appProperties, which lets deletion find older records without a stored Drive ID.
+  const items = await this.getAllDriveItems(accessToken)
+  const matchingFiles = items.filter((item) =>
+    (driveFileId && item.id === driveFileId) || (lid && item.appProperties?.lid === String(lid)))
+  if (matchingFiles.length === 0) return 0
+
+  let deletedCount = 0
+  for (const item of matchingFiles) {
+    const response = await fetch(
+      `https://www.googleapis.com/drive/v3/files/${encodeURIComponent(item.id)}`,
+      { method: 'DELETE', headers: { Authorization: `Bearer ${accessToken}` } },
+    )
+    if (!response.ok) {
+      throw new Error(`Google Drive deletion failed after ${deletedCount} file(s): ${response.status}`)
+    }
+    deletedCount += 1
+  }
+
+  return deletedCount
+}
 
 
 static uploadFile = async (
