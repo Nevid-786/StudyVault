@@ -23,6 +23,29 @@ export const chunkText = (text, chunkSize = 1400, overlap = 180) => {
   return chunks
 }
 
+export const chunkMaterialText = ({ text, pages }) => (
+  Array.isArray(pages) && pages.length > 0
+    ? pages.flatMap(({ pageNumber, text: pageText }) =>
+      chunkText(pageText).map((chunk) => ({ text: chunk, page: pageNumber })))
+    : chunkText(text).map((chunk) => ({ text: chunk, page: null }))
+)
+
+export const mergeConversationContext = (previousMessages, retrievedChunks) => {
+  const previousAssistant = [...previousMessages].reverse().find((message) => (
+    message.role === 'model' && Array.isArray(message.context)
+  ))
+  const previousContext = previousAssistant?.context.slice(-4) ?? []
+  const combined = [...previousContext, ...retrievedChunks.slice(0, 4)]
+  const seen = new Set()
+
+  return combined.filter((chunk) => {
+    const key = chunk.id || JSON.stringify([chunk.title, chunk.location, chunk.page, chunk.text])
+    if (seen.has(key)) return false
+    seen.add(key)
+    return true
+  }).slice(0, 8)
+}
+
 export const cosineSimilarity = (left, right) => {
   if (!Array.isArray(left) || !Array.isArray(right) || left.length !== right.length || left.length === 0) {
     return 0

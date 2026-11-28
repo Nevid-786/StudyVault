@@ -27,11 +27,14 @@ const extractPdf = async (file) => {
     for (let pageNumber = 1; pageNumber <= pdfDocument.numPages; pageNumber += 1) {
       const page = await pdfDocument.getPage(pageNumber)
       const content = await page.getTextContent()
-      pages.push(content.items.map((item) => ('str' in item ? item.str : '')).join(' '))
+      pages.push({
+        pageNumber,
+        text: content.items.map((item) => ('str' in item ? item.str : '')).join(' '),
+      })
       page.cleanup()
     }
 
-    return pages.join('\n\n')
+    return pages
   } finally {
     await loadingTask.destroy()
   }
@@ -79,7 +82,7 @@ const extractImage = async (file) => {
   }
 }
 
-export const extractMaterialText = async (file, fileName = file?.name || '') => {
+export const extractMaterialDocument = async (file, fileName = file?.name || '') => {
   if (!(file instanceof Blob)) {
     throw new TypeError('The selected material has no readable file data.')
   }
@@ -89,9 +92,11 @@ export const extractMaterialText = async (file, fileName = file?.name || '') => 
 
   const extension = getExtension(fileName)
   let text
+  let pages = null
 
   if (extension === 'pdf' || file.type === 'application/pdf') {
-    text = await extractPdf(file)
+    pages = await extractPdf(file)
+    text = pages.map((page) => page.text).join('\n\n')
   } else if (extension === 'docx') {
     const mammothModule = await import('mammoth/mammoth.browser.js')
     const mammoth = mammothModule.default || mammothModule
@@ -117,5 +122,17 @@ export const extractMaterialText = async (file, fileName = file?.name || '') => 
     throw new Error('Extracted text exceeds the 250,000-character per-file limit.')
   }
 
-  return normalizedText
+  return {
+    text: normalizedText,
+    pages: pages
+      ?.map(({ pageNumber, text: pageText }) => ({
+        pageNumber,
+        text: normalizeText(pageText),
+      }))
+      .filter((page) => page.text) ?? null,
+  }
 }
+
+export const extractMaterialText = async (file, fileName = file?.name || '') => (
+  (await extractMaterialDocument(file, fileName)).text
+)

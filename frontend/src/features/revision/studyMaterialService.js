@@ -1,8 +1,8 @@
 import { api } from '../../hooks/axiosHook.js'
 import localDB from '../../config/indexdb.js'
 import GoogleDriveService from '../../services/googleDrive.js'
-import { extractMaterialText } from './documentExtraction.js'
-import { chunkText } from './ragUtils.js'
+import { extractMaterialDocument } from './documentExtraction.js'
+import { chunkMaterialText } from './ragUtils.js'
 import { findRelevantChunks, getIndexChunks, replaceIndexChunks } from './ragIndex.js'
 
 const EMBEDDING_BATCH_SIZE = 24
@@ -84,15 +84,15 @@ export const indexStudyMaterials = async ({ userId, accessToken, folderId, onPro
   let totalChunks = 0
 
   for (const [documentIndex, document] of documents.entries()) {
-    let text
+    let extracted
     try {
-      text = await extractMaterialText(document.file, document.name)
+      extracted = await extractMaterialDocument(document.file, document.name)
     } catch (error) {
       skipped.push({ name: document.name, reason: error.message })
       continue
     }
 
-    const textChunks = chunkText(text)
+    const textChunks = chunkMaterialText(extracted)
     if (totalChunks + textChunks.length > MAX_INDEX_CHUNKS) {
       skipped.push({ name: document.name, reason: 'Adding this file would exceed the 4,000-chunk index limit.' })
       continue
@@ -100,18 +100,19 @@ export const indexStudyMaterials = async ({ userId, accessToken, folderId, onPro
 
     for (let offset = 0; offset < textChunks.length; offset += EMBEDDING_BATCH_SIZE) {
       const batch = textChunks.slice(offset, offset + EMBEDDING_BATCH_SIZE)
-      const embeddingTexts = batch.map((chunk) =>
-        `title: ${document.name} | ${document.location || 'Study material'}\ntext: ${chunk}`)
+      const embeddingTexts = batch.map(({ text, page }) =>
+        `title: ${document.name} | ${document.location || 'Study material'}${page ? ` | Page ${page}` : ''}\ntext: ${text}`)
       const embeddings = await getEmbeddingBatch(embeddingTexts, 'RETRIEVAL_DOCUMENT')
 
-      batch.forEach((chunk, index) => {
+      batch.forEach(({ text, page }, index) => {
         chunksToSave.push({
           id: `${document.id}-${offset + index}`,
           documentId: document.id,
           title: document.name,
           source: document.source,
           location: document.location,
-          text: chunk,
+          text,
+          page,
           embedding: embeddings[index],
         })
       })

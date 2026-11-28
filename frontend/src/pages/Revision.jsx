@@ -8,6 +8,8 @@ import {
   indexStudyMaterials,
   retrieveStudyContext,
 } from '../features/revision/studyMaterialService.js'
+import { loadRevisionChat, saveRevisionChat } from '../features/revision/chatStorage.js'
+import { mergeConversationContext } from '../features/revision/ragUtils.js'
 import './Revision.css'
 
 const ReactMarkdown = lazy(() => import('react-markdown'))
@@ -32,7 +34,7 @@ const getErrorMessage = (error) => (
 const getSourceGroups = (chunks) => {
   const groups = new Map()
   chunks.forEach((chunk, index) => {
-    const key = JSON.stringify([chunk.title, chunk.source, chunk.location])
+    const key = JSON.stringify([chunk.title, chunk.source, chunk.location, chunk.page])
     const group = groups.get(key)
     if (group) {
       group.ids.push(`S${index + 1}`)
@@ -42,6 +44,7 @@ const getSourceGroups = (chunks) => {
         title: chunk.title,
         source: chunk.source,
         location: chunk.location,
+        page: chunk.page,
       })
     }
   })
@@ -55,6 +58,7 @@ const Revision = () => {
   const userId = user?.sub
   const [mode, setMode] = useState('study')
   const [messages, setMessages] = useState(initialMessages)
+  const [messagesOwner, setMessagesOwner] = useState(null)
   const [draft, setDraft] = useState('')
   const [indexInfo, setIndexInfo] = useState({ chunkCount: 0, documentCount: 0 })
   const [indexOwner, setIndexOwner] = useState(null)
@@ -65,10 +69,35 @@ const Revision = () => {
   const [indexSkipped, setIndexSkipped] = useState([])
   const [isSending, setIsSending] = useState(false)
   const [chatError, setChatError] = useState('')
+  const [chatStorageError, setChatStorageError] = useState('')
   const messagesEndRef = useRef(null)
-  const visibleMessages = messages[mode]
+  const visibleMessages = messagesOwner === userId ? messages[mode] : initialMessages[mode]
   const isLoadingIndex = Boolean(userId && indexOwner !== userId)
   const visibleIndexInfo = indexOwner === userId ? indexInfo : { chunkCount: 0, documentCount: 0 }
+
+  useEffect(() => {
+    if (!userId) return
+
+    try {
+      setMessages(loadRevisionChat(userId) ?? initialMessages)
+      setMessagesOwner(userId)
+      setChatStorageError('')
+    } catch (error) {
+      setMessagesOwner(null)
+      setChatStorageError(error.message || 'Unable to load saved chat.')
+    }
+  }, [userId])
+
+  useEffect(() => {
+    if (!userId || messagesOwner !== userId) return
+
+    try {
+      saveRevisionChat(userId, messages)
+      setChatStorageError('')
+    } catch (error) {
+      setChatStorageError(`Chat is not being saved on this device: ${error.message}`)
+    }
+  }, [messages, messagesOwner, userId])
 
   useEffect(() => {
     let isCurrent = true
@@ -133,7 +162,7 @@ const Revision = () => {
   const handleSubmit = async (event) => {
     event.preventDefault()
     const question = draft.trim()
-    if (!question || isSending) return
+    if (!question || isSending || !userId || messagesOwner !== userId) return
 
     setDraft('')
     setChatError('')
@@ -148,10 +177,16 @@ const Revision = () => {
       const matchedChunks = mode === 'study'
         ? await retrieveStudyContext(userId, question)
         : []
-      const context = matchedChunks.map((chunk, index) => ({
+      const contextChunks = mode === 'study'
+        ? mergeConversationContext(previousMessages, matchedChunks)
+        : []
+      const context = contextChunks.map((chunk, index) => ({
         id: `S${index + 1}`,
         title: chunk.title,
-        text: `${chunk.location ? `${chunk.location}\n` : ''}${chunk.text}`,
+        text: `${[
+          chunk.location,
+          chunk.page ? `Page ${chunk.page}` : null,
+        ].filter(Boolean).join('\n')}${chunk.location || chunk.page ? '\n' : ''}${chunk.text}`,
       }))
       const answer = await createAiReply({
         mode,
@@ -162,10 +197,10 @@ const Revision = () => {
           .map(({ role, text }) => ({ role: role === 'user' ? 'user' : 'model', text })),
         context,
       })
-      const sources = getSourceGroups(matchedChunks)
+      const sources = getSourceGroups(contextChunks)
       setMessages((current) => ({
         ...current,
-        [mode]: [...current[mode], { role: 'model', text: answer, sources }],
+        [mode]: [...current[mode], { role: 'model', text: answer, sources, context: contextChunks }],
       }))
     } catch (error) {
       setChatError(getErrorMessage(error))
@@ -175,11 +210,14 @@ const Revision = () => {
   }
 
   const handleClearChat = () => {
+    const currentMessages = messagesOwner === userId ? messages : initialMessages
     setMessages((current) => ({
-      ...current,
+      ...(messagesOwner === userId ? current : currentMessages),
       [mode]: [initialMessages[mode][0]],
     }))
+    if (userId) setMessagesOwner(userId)
     setChatError('')
+    setChatStorageError('')
   }
 
   return (
@@ -241,7 +279,7 @@ const Revision = () => {
                   <strong>Study mode</strong>
                   <span>
                     Files are read in your browser. Extracted text is sent to Gemini for embeddings;
-                    the searchable index stays in this browser.
+                    the searchable index stays in this browser. Refresh the index to add PDF page references.
                   </span>
                   {indexProgress && (
                     <span className="revision-progress">
@@ -292,9 +330,10 @@ const Revision = () => {
                           <div className="revision-citations">
                             <strong>Retrieved sources</strong>
                             {message.sources.map((source) => (
-                              <span key={`${source.title}-${source.location}-${source.source}`}>
+                              <span key={`${source.title}-${source.location}-${source.source}-${source.page ?? ''}`}>
                                 <b>{source.ids.map((id) => `[${id}]`).join(', ')}</b> {source.title}
                                 {source.location ? ` · ${source.location}` : ''}
+                                {source.page ? ` · Page ${source.page}` : ''}
                                 <small> · {source.source}</small>
                               </span>
                             ))}
@@ -310,6 +349,9 @@ const Revision = () => {
                 </div>
 
                 {chatError && <p className="revision-error revision-chat-error" role="alert">{chatError}</p>}
+                {chatStorageError && (
+                  <p className="revision-error revision-chat-error" role="alert">{chatStorageError}</p>
+                )}
 
                 <form className="revision-composer" onSubmit={handleSubmit}>
                   <textarea
@@ -327,9 +369,12 @@ const Revision = () => {
                     }}
                     maxLength={2000}
                     rows={2}
-                    disabled={isSending || !userId}
+                    disabled={isSending || !userId || messagesOwner !== userId}
                   />
-                  <button type="submit" disabled={isSending || !draft.trim() || !userId}>
+                  <button
+                    type="submit"
+                    disabled={isSending || !draft.trim() || !userId || messagesOwner !== userId}
+                  >
                     {isSending ? 'Sending…' : 'Send'}
                   </button>
                 </form>

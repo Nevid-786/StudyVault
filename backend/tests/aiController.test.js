@@ -31,6 +31,111 @@ test("study chat requires retrieved material context", async () => {
 	assert.equal(response.body.message, "Index study materials before asking a study question.");
 });
 
+test("study chat sends prior turns and page-labelled context for follow-up questions", async () => {
+	const previousKey = process.env.GEMINI_API_KEY;
+	const previousFetch = globalThis.fetch;
+	let requestBody;
+	process.env.GEMINI_API_KEY = "test-key";
+	globalThis.fetch = async (_url, options) => {
+		requestBody = JSON.parse(options.body);
+		return {
+			ok: true,
+			status: 200,
+			json: async () => ({
+				candidates: [{ content: { parts: [{ text: "ANN is on page 4 [S1]." }] } }],
+			}),
+		};
+	};
+
+	try {
+		const response = createResponse();
+		await createChatResponse(
+			{
+				body: {
+					question: "On which page is this topic?",
+					mode: "study",
+					history: [
+						{ role: "user", text: "What is ANN?" },
+						{ role: "model", text: "ANN is an artificial neural network." },
+					],
+					context: [{
+						id: "S1",
+						title: "ANN notes",
+						text: "Page 4\nAn artificial neural network is a computing system.",
+					}],
+				},
+			},
+			response,
+		);
+
+		assert.equal(response.statusCode, 200);
+		assert.deepEqual(
+			requestBody.contents.map(({ role, parts }) => [role, parts[0].text]),
+			[
+				["user", "What is ANN?"],
+				["model", "ANN is an artificial neural network."],
+				["user", "On which page is this topic?"],
+			],
+		);
+		assert.match(requestBody.systemInstruction.parts[0].text, /Page 4/);
+		assert.match(requestBody.systemInstruction.parts[0].text, /For page questions/);
+	} finally {
+		globalThis.fetch = previousFetch;
+		if (previousKey === undefined) delete process.env.GEMINI_API_KEY;
+		else process.env.GEMINI_API_KEY = previousKey;
+	}
+});
+
+test("general chat uses prior turns to answer counter-questions", async () => {
+	const previousKey = process.env.GEMINI_API_KEY;
+	const previousFetch = globalThis.fetch;
+	let requestBody;
+	process.env.GEMINI_API_KEY = "test-key";
+	globalThis.fetch = async (_url, options) => {
+		requestBody = JSON.parse(options.body);
+		return {
+			ok: true,
+			status: 200,
+			json: async () => ({
+				candidates: [{ content: { parts: [{ text: "ANN is commonly used for pattern recognition." }] } }],
+			}),
+		};
+	};
+
+	try {
+		const response = createResponse();
+		await createChatResponse(
+			{
+				body: {
+					question: "What is it commonly used for?",
+					mode: "general",
+					history: [
+						{ role: "user", text: "What is an artificial neural network?" },
+						{ role: "model", text: "It is a computing system inspired by biological neural networks." },
+					],
+				},
+			},
+			response,
+		);
+
+		assert.equal(response.statusCode, 200);
+		assert.deepEqual(
+			requestBody.contents.map(({ role, parts }) => [role, parts[0].text]),
+			[
+				["user", "What is an artificial neural network?"],
+				["model", "It is a computing system inspired by biological neural networks."],
+				["user", "What is it commonly used for?"],
+			],
+		);
+		assert.match(requestBody.systemInstruction.parts[0].text, /Use the recent conversation as context/);
+		assert.match(requestBody.systemInstruction.parts[0].text, /ask a clarifying question/);
+	} finally {
+		globalThis.fetch = previousFetch;
+		if (previousKey === undefined) delete process.env.GEMINI_API_KEY;
+		else process.env.GEMINI_API_KEY = previousKey;
+	}
+});
+
 test("AI endpoints report missing Gemini configuration without calling the provider", async () => {
 	const previousKey = process.env.GEMINI_API_KEY;
 	delete process.env.GEMINI_API_KEY;
