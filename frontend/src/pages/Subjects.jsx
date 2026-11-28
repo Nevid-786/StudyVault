@@ -5,6 +5,7 @@ import { useSelector } from 'react-redux'
 import  SubjectService from '../services/subjectService'
 import { useNavigate } from 'react-router-dom'
 import AddUnit from '../components/AddUnit'
+import {motion} from "motion/react"
 
 
 const fileTypeMeta = {
@@ -20,7 +21,7 @@ function SubjectCard({ subject, onOpen }) {
 
 
   return (
-    <div className="subj-card flex flex-col justify-center items-center " onClick={() =>navigate(`/subjects/${subject.name}`)}>
+    <div className="subj-card flex flex-col justify-center items-center " >
 
     
 
@@ -34,9 +35,14 @@ function SubjectCard({ subject, onOpen }) {
  
 
       {/* Open button */}
-      <div className="rounded-sm bg-blue-600" style={{ padding: '8px 12px' }} >
+      <motion.div
+      whileHover={{ scale: 1.05 }}
+      whileTap={{ scale: 0.95 }}
+      className="rounded-sm bg-blue-600" 
+      onClick={() =>navigate(`/subjects/${subject.name}`)} 
+      style={{ padding: '8px 12px' }} >
         Open Subject →
-      </div>
+      </motion.div>
     </div>
   )
 }

@@ -5,6 +5,7 @@ import TopBar from '../components/TopBar'
 import { syncFilesWithGoogleDrive } from '../config/sync'
 import GoogleDriveService from '../services/googleDrive'
 import localDB from '../config/indexdb'
+import SubjectService from '../services/subjectService'
 
 const activityItems = [
   { id: 1, name: 'Maxwell_Equations_Electromagnetism.pdf', subject: 'Physics', detail: '4.8 MB', status: 'Synced', time: '2m ago', kind: 'PDF' },
@@ -207,6 +208,7 @@ const StorageSync = () => {
 
 
   const handle_download_Sync = async () => {
+    
     const download_result = await Promise.all(dfiles.map(async (file) => {
       const downloadedFile = await GoogleDriveService.downloadFile(file.id, accessToken,
         ({ progress }) => {
@@ -242,6 +244,10 @@ const StorageSync = () => {
 
   }
   const handle_upload_sync = async () => {
+
+
+
+    const result = await SubjectService.createSubAndUnitSync(dfiles);
     await Promise.all(ufiles.map(async (file) => {
       // Upload each file to Google Drive
       if (!folderId) { console.log("No root Folder found") };
@@ -270,6 +276,7 @@ const StorageSync = () => {
   const handleSyncCheck = async () => {
     setSyncError('')
     setSyncMessage('')
+    const result = await SubjectService.createSubAndUnitSync(dfiles);
 
     if (!accessToken) {
       setSyncError('Connect Google Drive before checking sync status.')
@@ -281,6 +288,7 @@ const StorageSync = () => {
       const { UFiles, DFiles } = await syncFilesWithGoogleDrive(accessToken)
       setUfiles(UFiles)
       setDfiles(DFiles)
+
 
 
 
@@ -364,7 +372,7 @@ const StorageSync = () => {
                   
                   {ufiles.length > 0 && <div className={`flex flex-col items-start border-rose-200 bg-teal-50 text-teal-700 gap-2 rounded-xl border px-4 py-3 text-sm`}> <ul className='w-full list-decimal'>{ufiles.map((f) => (
 
-                    <div key={f.lid} className="flex justify-between w-full">
+                    <div key={ufiles.lid} className="flex justify-between w-full">
                       <li className='flex-1'>
                         {f.name}
 

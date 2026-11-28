@@ -12,6 +12,10 @@ import AddNotes from './pages/AddNotes.jsx'
 import Unitpage from './pages/UnitPage.jsx'
 import StorageSync from './pages/StorageSync.jsx'
 import Revision from './pages/Revision.jsx'
+import PDFPage from './pages/PDFPage.jsx'
+import DOCXPage from './pages/DOCXPage.jsx'
+import PPTXPage from './pages/PPTXPage.jsx'
+import ImagePage from './pages/ImagePage.jsx'
 
 const router = createBrowserRouter([
   {
@@ -26,6 +30,10 @@ const router = createBrowserRouter([
       {path:"subjects/:name" ,element:<SingleSubject/>},
       {path:"unit" ,element:<Unitpage/>},
       { path: 'login',     element: <div /> },
+      { path: 'pdf/:lid',     element: <PDFPage /> },
+      { path: 'docx/:lid',    element: <DOCXPage /> },
+      { path: 'pptx/:lid',    element: <PPTXPage /> },
+      { path: 'image/:lid',   element: <ImagePage /> },
     ],
   },
 ])

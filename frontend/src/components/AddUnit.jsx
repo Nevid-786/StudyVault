@@ -40,13 +40,14 @@ const AddUnit = ({name,setIsOpen,isOpen}) => {
           <form onSubmit={handleSubmit}>
             <h2 id="add-unit-heading">Add a unit</h2>
             <label>
-              Unit title
-              <input value={title} onChange={(event) => setTitle(event.target.value)} required />
-            </label>
-            <label>
               Unit number
               <input type="number" value={number} onChange={(event) => setNumber(event.target.value)} required />
             </label>
+            <label>
+              Unit title
+              <input value={title} onChange={(event) => setTitle(event.target.value)} required />
+            </label>
+            
             <button type="submit">Save unit</button>
             <button type="button" onClick={() => setIsOpen(false)}>Cancel</button>
           </form>

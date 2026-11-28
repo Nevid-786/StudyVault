@@ -399,4 +399,78 @@ export default class localDB {
       };
     });
   }
+
+  static async getFileByLid(lid) {
+    if (lid == null || lid === '') {
+      throw new TypeError('File ID is required to retrieve a file')
+    }
+
+    return new Promise((resolve, reject) => {
+      const req = indexedDB.open(DATABASE_NAME, 1)
+
+      req.onsuccess = () => {
+        const db = req.result
+        try {
+          const tx = db.transaction('files', 'readonly')
+          const request = tx.objectStore('files').index('by_lid').get(lid)
+
+          request.onsuccess = () => resolve(request.result)
+          request.onerror = () => reject(request.error || new Error('Unable to retrieve file'))
+          tx.oncomplete = () => db.close()
+          tx.onerror = () => reject(tx.error || new Error('Unable to retrieve file'))
+          tx.onabort = () => reject(tx.error || new Error('File lookup was aborted'))
+        } catch (error) {
+          db.close()
+          reject(error)
+        }
+      }
+
+      req.onerror = () => reject(req.error || new Error('Unable to open the study vault'))
+    })
+  }
+
+  static async deleteFile(lid) {
+    console.log("Deleting file with lid:", lid)
+    if (!lid) {
+      throw new TypeError('File ID is required to delete a file')
+    }
+
+    return new Promise((resolve, reject) => {
+      const req = indexedDB.open(DATABASE_NAME, 1)
+
+      req.onsuccess = () => {
+        const db = req.result
+        try {
+          const tx = db.transaction('files', 'readwrite')
+          const store = tx.objectStore('files')
+          
+          const request = store.index('by_lid').getKey(lid);
+          request.onsuccess = () => {
+            console.log('Key to delete:', request.result)
+                  const deleteRequest = store.delete(request.result)
+                  deleteRequest.onsuccess = () => {
+                  console.log('File deleted successfully for key:', request.result)
+          }
+
+          }
+
+          tx.oncomplete = () => {
+            db.close()
+            resolve(true)
+          }
+          tx.onerror = () => reject(tx.error || new Error('Unable to delete file'))
+          tx.onabort = () => reject(tx.error || new Error('File deletion was aborted'))
+          request.onerror = () => reject(request.error || new Error('Unable to delete file'))
+        } catch (error) {
+          db.close()
+          reject(error)
+        }
+      }
+
+      req.onerror = () => reject(req.error || new Error('Unable to open the study vault'))
+    })
+  }
+
+  
+
 }

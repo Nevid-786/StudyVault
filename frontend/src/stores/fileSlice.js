@@ -17,6 +17,10 @@ const filesSlice = createSlice({
           keyPath:"id",
           autoIncrement:true
         });
+        const pdfProgressStore=db.createObjectStore("pdfProgress",{
+          keyPath:"id",
+          autoIncrement:true
+        });
         const filestore=db.createObjectStore("files",{
           keyPath:"id",
           autoIncrement:true
@@ -26,9 +30,11 @@ const filesSlice = createSlice({
           keyPath:"id",
           autoIncrement:true
         });
-       
+         pdfProgressStore.createIndex("by_lid","lid",{unique:true})
         store.createIndex("by_name","name",{unique:false})
         filestore.createIndex("by_location",["semester","subject","unit"],{unique:false})
+        filestore.createIndex("by_lid","lid",{unique:true})
+
         unitsStore.createIndex("by_subject","name",{unique:false})
       }
 

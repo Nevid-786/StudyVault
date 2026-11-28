@@ -1,0 +1,23 @@
+.docx-viewer-pages {
+  min-width: max-content;
+}
+
+.docx-viewer-pages .docx-wrapper {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 1.5rem;
+  background: transparent;
+  padding: 0;
+  zoom: var(--docx-scale, 1);
+}
+
+.docx-viewer-pages section.docx {
+  flex: none;
+  transform: rotate(var(--docx-rotation, 0deg));
+  transform-origin: center;
+}
+
+.docx-viewer-scroll {
+  scroll-behavior: smooth;
+}

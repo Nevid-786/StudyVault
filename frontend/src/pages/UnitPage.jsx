@@ -5,6 +5,7 @@ import { useSelector } from 'react-redux'
 import SideBar from '../components/SideBar'
 import TopBar from '../components/TopBar'
 import localDB from '../config/indexdb'
+import { motion } from 'motion/react'
 
 const formatFileSize = (size) => {
   size = Number(size)
@@ -25,6 +26,20 @@ const getFileIcon = (type) => {
   return '📄'
 }
 
+const getViewerPath = (file) => {
+  const type = (file.type || '').toLowerCase()
+  const extension = file.name?.split('.').pop()?.toLowerCase()
+  const lid = encodeURIComponent(file.lid)
+
+  if (type === 'application/pdf' || extension === 'pdf') return `/pdf/${lid}`
+  if (type.startsWith('image/') || ['png', 'jpg', 'jpeg', 'gif', 'webp', 'bmp', 'svg'].includes(extension)) {
+    return `/image/${lid}`
+  }
+  if (type.includes('wordprocessingml') || ['docx', 'doc'].includes(extension)) return `/docx/${lid}`
+  if (type.includes('presentationml') || ['pptx', 'ppt'].includes(extension)) return `/pptx/${lid}`
+  return null
+}
+
 const UnitPage = () => {
   const [searchParams] = useSearchParams()
   const navigate = useNavigate()
@@ -42,13 +57,10 @@ const UnitPage = () => {
   const [error, setError] = useState(null)
 
   // Load files from IndexedDB
-  useEffect(() => {
+  const loadFiles = async () => {
     let isCurrent = true
-
-    setLoading(true)
     setError(null)
-
-    localDB
+     localDB
       .getallfileInAUnit(semester, subject, unit)
       .then((result) => {
         if (isCurrent) {
@@ -67,10 +79,15 @@ const UnitPage = () => {
           setLoading(false)
         }
       })
+  }
 
-    return () => {
-      isCurrent = false
-    }
+  useEffect(() => {
+   
+
+
+
+    loadFiles()
+   
   }, [semester, subject, unit])
 
   // Create preview URLs when files change.
@@ -190,7 +207,7 @@ const UnitPage = () => {
                 const previewUrl = previewUrls[file.id]
 
                 return (
-                  <div className="subj-card" key={file.id}>
+                  <div className="subj-card"  key={file.id}>
                     <div className="subj-card-header">
                       <div
                         className="subj-card-icon"
@@ -274,16 +291,36 @@ const UnitPage = () => {
                     </div>
 
                     {previewUrl && (
-                      <button
-                        className="subj-open-btn"
-                        style={{
-                          background: '#eef2ff',
-                          color: '#4f46e5',
+                      <div className=" flex gap-x-0.5 mt-2">
+                        <motion.button
+                        whileClick={{ scale: 0.95 }}
+                        className="subj-delete-btn bg-red-400 text-white p-1 rounded-lg"
+                  
+                        
+                         onClick={async () => {
+
+                          const result =await localDB.deleteFile(file.lid)
+                          console.log('File deleted:', result)
+                          loadFiles()
+                        }}>
+                          Delete file
+
+                        </motion.button>
+                        <button onClick={() => {
+                          const viewerPath = getViewerPath(file)
+                          if (viewerPath) window.open(viewerPath, '_blank', 'noopener,noreferrer')
+                          else openFile(file)
                         }}
-                        onClick={() => openFile(file)}
-                      >
-                        Open file
-                      </button>
+                          className="subj-open-btn"
+                          style={{
+                            background: '#eef2ff',
+                            color: '#4f46e5',
+                          }}
+
+                        >
+                          Open file
+                        </button>
+                      </div>
                     )}
                   </div>
                 )

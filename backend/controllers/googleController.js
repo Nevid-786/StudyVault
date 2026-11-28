@@ -79,7 +79,7 @@ export const getGoogleAccessToken = async (req, res) => {
 				folderId: folderId
 			},
 			process.env.JWT_SECRET,
-			{ algorithm: "HS256", expiresIn: "1h", issuer: JWT_ISSUER }
+			{ algorithm: "HS256", expiresIn: "3h", issuer: JWT_ISSUER }
 		);
 
 		res.cookie(AUTH_COOKIE_NAME, token, authCookieOptions)
