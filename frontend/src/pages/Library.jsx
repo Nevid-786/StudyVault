@@ -239,7 +239,9 @@ const Library = () => {
                   </span>
                   <div className="min-w-0">
                     <p className="text-xs font-medium text-slate-500">{stat.label}</p>
-                    <p className="mt-0.5 truncate text-xl font-bold text-slate-900">{loading ? '...' : stat.value}</p>
+                    <p className="mt-0.5 truncate text-xl font-bold text-slate-900">
+                      {loading ? '...' : error ? '—' : stat.value}
+                    </p>
                     <p className="text-xs text-slate-500">{stat.detail}</p>
                   </div>
                 </article>
