@@ -7,6 +7,7 @@ import TopBar from '../components/TopBar'
 import localDB from '../config/indexdb'
 import GoogleDriveService from '../services/googleDrive'
 import { motion } from 'motion/react'
+import { getViewerPath } from '../utils/fileViewer'
 
 const formatFileSize = (size) => {
   size = Number(size)
@@ -25,20 +26,6 @@ const getFileIcon = (type) => {
   if (type?.includes('presentation')) return '📊'
   if (type?.includes('word')) return '📝'
   return '📄'
-}
-
-const getViewerPath = (file) => {
-  const type = (file.type || '').toLowerCase()
-  const extension = file.name?.split('.').pop()?.toLowerCase()
-  const lid = encodeURIComponent(file.lid)
-
-  if (type === 'application/pdf' || extension === 'pdf') return `/pdf/${lid}`
-  if (type.startsWith('image/') || ['png', 'jpg', 'jpeg', 'gif', 'webp', 'bmp', 'svg'].includes(extension)) {
-    return `/image/${lid}`
-  }
-  if (type.includes('wordprocessingml') || ['docx', 'doc'].includes(extension)) return `/docx/${lid}`
-  if (type.includes('presentationml') || ['pptx', 'ppt'].includes(extension)) return `/pptx/${lid}`
-  return null
 }
 
 const UnitPage = () => {

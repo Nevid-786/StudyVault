@@ -5,6 +5,7 @@ import { createBrowserRouter, RouterProvider } from 'react-router-dom'
 
 import { store } from './stores/store.js'
 import Home from './pages/Home.jsx'
+import Library from './pages/Library.jsx'
 import Subjects from './pages/Subjects.jsx'
 import AuthenticateLayout from './components/AuthenticateLayout.jsx'
 import SingleSubject from './pages/singleSubject.jsx'
@@ -26,6 +27,7 @@ const router = createBrowserRouter([
     element: <AuthenticateLayout />,
     children: [
       { index: true,       element: <Home /> },
+      { path: 'library',   element: <Library /> },
       { path: 'add',       element: <AddNotes /> },
       { path: 'subjects',  element: <Subjects /> },
       { path: 'storage',   element: <StorageSync /> },

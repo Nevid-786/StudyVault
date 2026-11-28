@@ -10,27 +10,7 @@ import {
   DEFAULT_DASHBOARD_PREFERENCES,
   readDashboardPreferences,
 } from '../config/dashboardPreferences'
-
-const getViewerPath = (file) => {
-  if (!file.lid) return null
-  const type = (file.type || '').toLowerCase()
-  const extension = file.name?.split('.').pop()?.toLowerCase()
-  const lid = encodeURIComponent(file.lid)
-
-  if (type === 'application/pdf' || extension === 'pdf') return `/pdf/${lid}`
-  if (type.startsWith('image/') || ['png', 'jpg', 'jpeg', 'gif', 'webp', 'bmp', 'svg'].includes(extension)) {
-    return `/image/${lid}`
-  }
-  if (type.includes('wordprocessingml') || ['docx', 'doc'].includes(extension)) return `/docx/${lid}`
-  if (
-    type.includes('presentationml')
-    || type === 'application/vnd.ms-powerpoint'
-    || ['pptx', 'ppt'].includes(extension)
-  ) {
-    return `/pptx/${lid}`
-  }
-  return null
-}
+import { getViewerPath } from '../utils/fileViewer'
 
 const formatBytes = (value) => {
   const bytes = Number(value) || 0
